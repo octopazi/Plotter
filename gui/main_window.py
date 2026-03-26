@@ -1,4 +1,6 @@
-from PyQt5.QtWidgets import QMainWindow, QAction, QFileDialog
+import os
+from PyQt5.QtWidgets import QMainWindow, QAction, QFileDialog, QInputDialog, QMessageBox
+from core.config_manager import ConfigManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -14,13 +16,20 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_file)
         file_menu.addAction(open_action)
 
-        import_config_action = QAction("Import Data Format Config", self)
-        import_config_action.triggered.connect(self.open_import_config_dialog)
-        file_menu.addAction(import_config_action)
+        # Config menu
+        config_menu = menubar.addMenu("Config")
 
-        create_config_action = QAction("Create Data Format Config", self)
-        create_config_action.triggered.connect(self.open_create_config_dialog)
-        file_menu.addAction(create_config_action)
+        new_config_action = QAction("New", self)
+        new_config_action.triggered.connect(self.open_create_config_dialog)
+        config_menu.addAction(new_config_action)
+
+        import_config_action = QAction("Import", self)
+        import_config_action.triggered.connect(self.open_import_config_dialog)
+        config_menu.addAction(import_config_action)
+
+        edit_config_action = QAction("Edit", self)
+        edit_config_action.triggered.connect(self.open_edit_config_dialog)
+        config_menu.addAction(edit_config_action)
 
         # Plot menu
         plot_menu = menubar.addMenu("Plot")
@@ -49,6 +58,17 @@ class MainWindow(QMainWindow):
     def open_create_config_dialog(self):
         from .create_config import CreateImportFormatDialog
         dialog = CreateImportFormatDialog(self)
-        if dialog.exec_():
-            config = dialog.get_config()
-            print("Created config:", config)
+        dialog.exec_()
+
+    def open_edit_config_dialog(self):
+        config_files = ConfigManager.get_available_configs()
+        if not config_files:
+            QMessageBox.warning(self, "Error", "No config files found in the Config folder.")
+            return
+
+        item, ok = QInputDialog.getItem(self, "Edit Config", "Select config to edit:", config_files, 0, False)
+        if ok and item:
+            config_path = ConfigManager.get_config_path(item)
+            from .create_config import EditImportFormatDialog
+            dialog = EditImportFormatDialog(config_path, self)
+            dialog.exec_()
