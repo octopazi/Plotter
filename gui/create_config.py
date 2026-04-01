@@ -21,6 +21,7 @@ class CreateImportFormatDialog(QDialog):
         box_format = QGroupBox("Format Name")
         layout_format = QFormLayout()
         self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("A unique name for this import format (e.g., 'EngineRuntime_v1'). Used as the filename.")
         layout_format.addRow("Name:", self.name_edit)
         box_format.setLayout(layout_format)
         main_layout.addWidget(box_format)
@@ -33,15 +34,21 @@ class CreateImportFormatDialog(QDialog):
 
         self.header_enabled = QComboBox()
         self.header_enabled.addItems(["False", "True"])
+        self.header_enabled.setToolTip("Whether the file contains a metadata header section before the data block.")
 
         self.header_lines = QSpinBox()
         self.header_lines.setRange(0, 50)
+        self.header_lines.setToolTip("The total number of rows at the top of the file that contain metadata or non-data text.")
 
         self.header_sep = QLineEdit(":")
+        self.header_sep.setToolTip("The character used to separate labels from values in the header lines (e.g. ':' in 'Date: 2024-01-01').")
+
         self.header_same_as_data = QComboBox()
         self.header_same_as_data.addItems(["False", "True"])
+        self.header_same_as_data.setToolTip("Set to True if the header rows use the same column separator as the data block.")
 
         self.header_ignore = QLineEdit("#")
+        self.header_ignore.setToolTip("Ignore any lines in the header area that start with this specific character or string.")
 
         layout_header.addRow("Header Enabled:", self.header_enabled)
         layout_header.addRow("Header Lines:", self.header_lines)
@@ -59,9 +66,14 @@ class CreateImportFormatDialog(QDialog):
         layout_data = QFormLayout()
 
         self.data_sep = QLineEdit(",")
+        self.data_sep.setToolTip("The character separating data values (e.g., ',' for CSV, '\t' for tab-separated).")
+
         self.data_ignore = QLineEdit("//")
+        self.data_ignore.setToolTip("Ignore any lines within the data block that start with this prefix.")
+
         self.data_header_lines = QSpinBox()
         self.data_header_lines.setRange(0, 10)
+        self.data_header_lines.setToolTip("The number of labels/names rows immediately preceding the data values (usually 1 for CSV column headers).")
 
         layout_data.addRow("Data Separator:", self.data_sep)
         layout_data.addRow("Data Ignore Prefix:", self.data_ignore)
@@ -80,9 +92,11 @@ class CreateImportFormatDialog(QDialog):
         x_layout = QFormLayout()
         self.x_type = QComboBox()
         self.x_type.addItems(["column", "index"])
+        self.x_type.setToolTip("'column' uses a specific data column; 'index' simply uses the row number (0, 1, 2...) as the X value.")
 
         self.x_index = QSpinBox()
         self.x_index.setRange(0, 50)
+        self.x_index.setToolTip("The zero-based column index to use for the X-axis (if X Type is 'column').")
 
         x_layout.addRow("X Type:", self.x_type)
         x_layout.addRow("X Column Index:", self.x_index)
@@ -94,8 +108,10 @@ class CreateImportFormatDialog(QDialog):
 
         y_add_layout = QHBoxLayout()
         self.y_name_edit = QLineEdit()
+        self.y_name_edit.setToolTip("The display name for the Y-axis source.")
         self.y_index_spin = QSpinBox()
         self.y_index_spin.setRange(0, 50)
+        self.y_index_spin.setToolTip("The zero-based column index in the data file for this Y value.")
 
         btn_add_y = QPushButton("Add Y")
         btn_add_y.clicked.connect(self.add_y_column)
@@ -129,9 +145,12 @@ class CreateImportFormatDialog(QDialog):
         conv_layout = QVBoxLayout()
 
         self.conv_name = QLineEdit()
+        self.conv_name.setToolTip("A name for this calculated column.")
         self.conv_formula = QLineEdit()
+        self.conv_formula.setToolTip("Mathematical formula (e.g., 'col1 * 10 + 5'). Use 'col[i]' to reference column indices.")
         self.conv_output_index = QSpinBox()
         self.conv_output_index.setRange(0, 100)
+        self.conv_output_index.setToolTip("The virtual column index assigned to the result of this calculation.")
 
         btn_add_conv = QPushButton("Add Rule")
         btn_del_conv = QPushButton("Delete Selected")
