@@ -134,17 +134,20 @@ class MainWindow(QMainWindow):
             
         df = self.current_dataset['dataframe']
         columns = df.columns.tolist()
+        # Filter out source file column for plot selection
+        if '_source_file' in columns:
+            columns.remove('_source_file')
         
         # 1. Pop UI to ask for X and Y Selection
         from .plot_setup_dialog import PlotSetupDialog
         dialog = PlotSetupDialog(columns, plot_type=plot_type, parent=self)
         if dialog.exec_():
             x_col = dialog.selected_x
-            y_col = dialog.selected_y
+            y_cols = dialog.selected_y_columns
             
             # 2. Show Plot Window after user confirmed input.
             from .plot_window import PlotWindow
-            plot_win = PlotWindow(df, x_col, y_col, plot_type=plot_type)
+            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type)
             
             # Avoid early garbage collection by maintaining references to open plots
             self.plot_windows.append(plot_win)
