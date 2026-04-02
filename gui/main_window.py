@@ -1,13 +1,24 @@
 import os
-from PyQt5.QtWidgets import QMainWindow, QAction, QFileDialog, QInputDialog, QMessageBox
+from PyQt5.QtWidgets import (
+    QMainWindow, QAction, QFileDialog, QInputDialog, QMessageBox, 
+    QSplitter, QWidget, QVBoxLayout, QListWidget, QTableView, QLabel, QHeaderView, QListWidgetItem
+)
+from PyQt5.QtCore import Qt
 from core.config_manager import ConfigManager
 from core.file_loader import FileLoader
+from core.data_manager import DataManager
+from core.pandas_table_model import PandasTableModel
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Plotter")
-        self.resize(800, 600)
+        self.resize(1000, 700)
+        
+        self.data_manager = DataManager()
+
+        # Setup Central Widget with Splitter for Data Viewer
+        self.setup_central_widget()
 
         menubar = self.menuBar()
 
@@ -55,36 +66,93 @@ class MainWindow(QMainWindow):
         # Track active plot windows so they don't get garbage collected
         self.plot_windows = []
 
+    def setup_central_widget(self):
+        splitter = QSplitter(Qt.Horizontal)
+        self.setCentralWidget(splitter)
+
+        # Left Panel (File List)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.addWidget(QLabel("Imported Files:"))
+        self.file_list_widget = QListWidget()
+        # Connect selection change to updating data viewer
+        self.file_list_widget.currentItemChanged.connect(self.on_file_selected)
+        left_layout.addWidget(self.file_list_widget)
+
+        # Right Panel (Data Viewer)
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.addWidget(QLabel("Data Viewer (Editable):"))
+        self.data_table_view = QTableView()
+        # Optimize view for large data sets
+        self.data_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        right_layout.addWidget(self.data_table_view)
+
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        
+        # Set proportion 1:4
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 4)
+
     def open_import_datalog_dialog(self):
         from .import_datalog import ImportDatalogDialog
         dialog = ImportDatalogDialog(self)
         if dialog.exec_():
             print(f"User requested to import {len(dialog.selected_files)} files using config {dialog.selected_config}")
             try:
-                # Use the new load_datalogs method for multi-file support
-                dataset = FileLoader.load_datalogs(dialog.selected_files, dialog.selected_config)
-                if dataset is None:
+                added_count = 0
+                last_dataset = None
+                
+                # Load each file and add to DataManager independently
+                for file_path in dialog.selected_files:
+                    result = FileLoader.load_datalog(file_path, dialog.selected_config)
+                    if not result: continue
+                    
+                    df = result['dataframe']
+                    metadata = result['metadata']
+                    name = os.path.basename(file_path)
+                    
+                    ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type="raw")
+                    last_dataset = self.data_manager.get_dataset(ds_id)
+                    added_count += 1
+                
+                if added_count == 0:
                     return
-
-                # Store it in MainWindow instance for future analysis/plotting tools
-                self.current_dataset = dataset
+                
+                self.update_file_list_widget()
                 
                 # Show summary
-                row_count = len(dataset["dataframe"])
-                meta_info = "\n".join([f"{k}: {v}" for k, v in dataset["metadata"].items()])
-                
-                file_summary = ", ".join([os.path.basename(f) for f in dialog.selected_files[:3]])
-                if len(dialog.selected_files) > 3:
-                    file_summary += f", and {len(dialog.selected_files)-3} more..."
-                
-                msg = f"Successfully imported {len(dialog.selected_files)} file(s):\n{file_summary}\n\nMetadata Summary:\n{meta_info}\n\nTotal Rows (Combined): {row_count}"
+                msg = f"Successfully imported {added_count} file(s)."
                 QMessageBox.information(self, "Success", msg)
-                print(f"Data Head:\n{dataset['dataframe'].head()}")
                 
             except Exception as e:
                 import traceback
                 traceback.print_exc()
                 QMessageBox.critical(self, "Import Error", f"Failed to import datalog: {str(e)}")
+
+    def update_file_list_widget(self):
+        self.file_list_widget.clear()
+        summaries = self.data_manager.get_all_summaries()
+        for summary in summaries:
+            item = QListWidgetItem(f"{summary['name']} ({summary['rows']} rows)")
+            item.setData(Qt.UserRole, summary['id'])
+            self.file_list_widget.addItem(item)
+
+    def on_file_selected(self, current, previous):
+        if not current:
+            return
+            
+        ds_id = current.data(Qt.UserRole)
+        dataset = self.data_manager.get_dataset(ds_id)
+        
+        if dataset:
+            # Update the table model directly with the dataset's dataframe
+            self.table_model = PandasTableModel(dataset.df)
+            self.data_table_view.setModel(self.table_model)
+            
+            # Edits in PandasTableModel modify dataset.df directly in memory, 
+            # so no manual 'sync_edited_data' index mapping is required anymore!
 
     def open_import_config_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -128,11 +196,17 @@ class MainWindow(QMainWindow):
             dialog.exec_()
 
     def open_plot_dialog(self, plot_type):
-        if not hasattr(self, 'current_dataset') or self.current_dataset is None:
-            QMessageBox.warning(self, "No Data", "Please import a datalog first.")
+        current_item = self.file_list_widget.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Data", "Please select a dataset from the left panel to plot.")
             return
             
-        df = self.current_dataset['dataframe']
+        ds_id = current_item.data(Qt.UserRole)
+        dataset = self.data_manager.get_dataset(ds_id)
+        if not dataset:
+            return
+            
+        df = dataset.df
         columns = df.columns.tolist()
         # Filter out source file column for plot selection
         if '_source_file' in columns:
@@ -147,7 +221,7 @@ class MainWindow(QMainWindow):
             
             # 2. Show Plot Window after user confirmed input.
             from .plot_window import PlotWindow
-            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type)
+            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type, window_title=f"{dataset.name} - Plot")
             
             # Avoid early garbage collection by maintaining references to open plots
             self.plot_windows.append(plot_win)
