@@ -7,6 +7,42 @@ class FileLoader:
     """Handles the Loading and Parsing of Data Files based on JSON Configurations."""
     
     @staticmethod
+    def load_datalogs(file_paths, config_filename):
+        """
+        Loads multiple datalog files and merges them into a single dataset.
+        Assumes all files share the same configuration.
+        """
+        all_dataframes = []
+        combined_metadata = {}
+
+        for path in file_paths:
+            result = FileLoader.load_datalog(path, config_filename)
+            df = result['dataframe']
+            metadata = result['metadata']
+            
+            # Add a source file column to distinguish data
+            df['_source_file'] = os.path.basename(path)
+            
+            all_dataframes.append(df)
+            
+            # Simple metadata merge (last one wins for conflicting keys)
+            combined_metadata.update(metadata)
+
+        if not all_dataframes:
+            return None
+
+        # Concatenate all dataframes
+        # We use ignore_index=True if we want a continuous index, 
+        # but if the data is time-series and needs to be aligned, 
+        # we might need more complex logic later. For now, simple append.
+        combined_df = pd.concat(all_dataframes, ignore_index=True)
+        
+        return {
+            'metadata': combined_metadata,
+            'dataframe': combined_df
+        }
+
+    @staticmethod
     def load_datalog(file_path, config_filename):
         """
         Loads a datalog file using rules defined in the config.

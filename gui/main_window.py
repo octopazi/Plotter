@@ -59,20 +59,31 @@ class MainWindow(QMainWindow):
         from .import_datalog import ImportDatalogDialog
         dialog = ImportDatalogDialog(self)
         if dialog.exec_():
-            print(f"User requested to import {dialog.selected_file} using config {dialog.selected_config}")
+            print(f"User requested to import {len(dialog.selected_files)} files using config {dialog.selected_config}")
             try:
-                dataset = FileLoader.load_datalog(dialog.selected_file, dialog.selected_config)
+                # Use the new load_datalogs method for multi-file support
+                dataset = FileLoader.load_datalogs(dialog.selected_files, dialog.selected_config)
+                if dataset is None:
+                    return
+
                 # Store it in MainWindow instance for future analysis/plotting tools
                 self.current_dataset = dataset
                 
                 # Show summary
                 row_count = len(dataset["dataframe"])
-                meta_info = "\\n".join([f"{k}: {v}" for k, v in dataset["metadata"].items()])
-                msg = f"Successfully imported {dialog.selected_file}\n\nMetadata:\n{meta_info}\n\nTotal Rows: {row_count}"
+                meta_info = "\n".join([f"{k}: {v}" for k, v in dataset["metadata"].items()])
+                
+                file_summary = ", ".join([os.path.basename(f) for f in dialog.selected_files[:3]])
+                if len(dialog.selected_files) > 3:
+                    file_summary += f", and {len(dialog.selected_files)-3} more..."
+                
+                msg = f"Successfully imported {len(dialog.selected_files)} file(s):\n{file_summary}\n\nMetadata Summary:\n{meta_info}\n\nTotal Rows (Combined): {row_count}"
                 QMessageBox.information(self, "Success", msg)
-                print(f"Data Head:\\n{dataset['dataframe'].head()}")
+                print(f"Data Head:\n{dataset['dataframe'].head()}")
                 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 QMessageBox.critical(self, "Import Error", f"Failed to import datalog: {str(e)}")
 
     def open_import_config_dialog(self):
