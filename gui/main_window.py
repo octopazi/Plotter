@@ -1,6 +1,7 @@
 import os
 from PyQt5.QtWidgets import QMainWindow, QAction, QFileDialog, QInputDialog, QMessageBox
 from core.config_manager import ConfigManager
+from core.file_loader import FileLoader
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -12,9 +13,9 @@ class MainWindow(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("File")
-        open_action = QAction("Open Data File", self)
-        open_action.triggered.connect(self.open_file)
-        file_menu.addAction(open_action)
+        import_datalog_action = QAction("Import Datalog", self)
+        import_datalog_action.triggered.connect(self.open_import_datalog_dialog)
+        file_menu.addAction(import_datalog_action)
 
         # Config menu
         config_menu = menubar.addMenu("Config")
@@ -44,6 +45,29 @@ class MainWindow(QMainWindow):
         tools_menu = menubar.addMenu("Tools")
         fft_action = QAction("FFT", self)
         tools_menu.addAction(fft_action)
+        
+        # Track active plot windows so they don't get garbage collected
+        self.plot_windows = []
+
+    def open_import_datalog_dialog(self):
+        from .import_datalog import ImportDatalogDialog
+        dialog = ImportDatalogDialog(self)
+        if dialog.exec_():
+            print(f"User requested to import {dialog.selected_file} using config {dialog.selected_config}")
+            try:
+                dataset = FileLoader.load_datalog(dialog.selected_file, dialog.selected_config)
+                # Store it in MainWindow instance for future analysis/plotting tools
+                self.current_dataset = dataset
+                
+                # Show summary
+                row_count = len(dataset["dataframe"])
+                meta_info = "\\n".join([f"{k}: {v}" for k, v in dataset["metadata"].items()])
+                msg = f"Successfully imported {dialog.selected_file}\n\nMetadata:\n{meta_info}\n\nTotal Rows: {row_count}"
+                QMessageBox.information(self, "Success", msg)
+                print(f"Data Head:\\n{dataset['dataframe'].head()}")
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Import Error", f"Failed to import datalog: {str(e)}")
 
     def open_import_config_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
