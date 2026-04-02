@@ -38,8 +38,14 @@ class MainWindow(QMainWindow):
 
         # Plot menu
         plot_menu = menubar.addMenu("Plot")
+        
         scatter_action = QAction("Scatter Plot", self)
+        scatter_action.triggered.connect(lambda: self.open_plot_dialog("scatter"))
         plot_menu.addAction(scatter_action)
+
+        line_scatter_action = QAction("Line + Scatter Plot", self)
+        line_scatter_action.triggered.connect(lambda: self.open_plot_dialog("line_scatter"))
+        plot_menu.addAction(line_scatter_action)
 
         # Tools menu (FFT)
         tools_menu = menubar.addMenu("Tools")
@@ -109,6 +115,33 @@ class MainWindow(QMainWindow):
             from .create_config import EditImportFormatDialog
             dialog = EditImportFormatDialog(config_path, self)
             dialog.exec_()
+
+    def open_plot_dialog(self, plot_type):
+        if not hasattr(self, 'current_dataset') or self.current_dataset is None:
+            QMessageBox.warning(self, "No Data", "Please import a datalog first.")
+            return
+            
+        df = self.current_dataset['dataframe']
+        columns = df.columns.tolist()
+        
+        # 1. Pop UI to ask for X and Y Selection
+        from .plot_setup_dialog import PlotSetupDialog
+        dialog = PlotSetupDialog(columns, plot_type=plot_type, parent=self)
+        if dialog.exec_():
+            x_col = dialog.selected_x
+            y_col = dialog.selected_y
+            
+            # 2. Show Plot Window after user confirmed input.
+            from .plot_window import PlotWindow
+            plot_win = PlotWindow(df, x_col, y_col, plot_type=plot_type)
+            
+            # Avoid early garbage collection by maintaining references to open plots
+            self.plot_windows.append(plot_win)
+            plot_win.show()
+
+    def open_scatter_plot(self):
+        # Deprecated: replaced by open_plot_dialog
+        self.open_plot_dialog("scatter")
 
     def open_delete_config_dialog(self):
         config_files = ConfigManager.get_available_configs()
