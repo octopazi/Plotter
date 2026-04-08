@@ -64,6 +64,26 @@ class PandasTableModel(QAbstractTableModel):
                 return str(self._data.index[section])
         return None
 
+    def setHeaderData(self, section, orientation, value, role=Qt.EditRole):
+        """Allow editing of column headers (horizontal headers only)."""
+        if orientation == Qt.Horizontal and role == Qt.EditRole:
+            try:
+                new_name = str(value).strip()
+                if not new_name:
+                    return False
+                
+                # Rename the column in the DataFrame
+                old_name = self._data.columns[section]
+                self._data.rename(columns={old_name: new_name}, inplace=True)
+                
+                # Emit signal to notify views of the header change
+                self.headerDataChanged.emit(orientation, section, section)
+                return True
+            except Exception as e:
+                print(f"Error renaming header: {e}")
+                return False
+        return False
+
     def flags(self, index):
         if not index.isValid():
             return Qt.NoItemFlags
@@ -73,3 +93,9 @@ class PandasTableModel(QAbstractTableModel):
             return super().flags(index) # Read-only
             
         return super().flags(index) | Qt.ItemIsEditable
+
+    def setHeaderDataFlags(self, section, orientation):
+        """Return flags for header editing. Used by table view for header section editing."""
+        if orientation == Qt.Horizontal:
+            return Qt.ItemIsEnabled | Qt.ItemIsEditable
+        return Qt.ItemIsEnabled

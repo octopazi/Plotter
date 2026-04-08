@@ -92,11 +92,11 @@ class CreateImportFormatDialog(QDialog):
         x_layout = QFormLayout()
         self.x_type = QComboBox()
         self.x_type.addItems(["column", "index"])
-        self.x_type.setToolTip("'column' uses a specific data column; 'index' simply uses the row number (0, 1, 2...) as the X value.")
+        self.x_type.setToolTip("'column' = use a specific data column for X-axis; 'index' = generate X-axis as row numbers (0, 1, 2, ...).")
 
         self.x_index = QSpinBox()
         self.x_index.setRange(0, 50)
-        self.x_index.setToolTip("The zero-based column index to use for the X-axis (if X Type is 'column').")
+        self.x_index.setToolTip("The zero-based column index to use for the X-axis (only used if X Type is 'column'). Ignored if X Type is 'index'.")
 
         x_layout.addRow("X Type:", self.x_type)
         x_layout.addRow("X Column Index:", self.x_index)

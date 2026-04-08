@@ -138,11 +138,19 @@ class FileLoader:
         
         # Map X Axis
         x_def = columns_mapping.get("x", {})
-        if "index" in x_def:
-            x_idx = x_def["index"]
-            c_name = f"col{x_idx}" if not has_col_names else original_cols[x_idx]
-            if c_name in df.columns:
-                rename_map[c_name] = x_def.get("name", "x")
+        x_type = x_def.get("type", "column")  # Default to "column" for backward compatibility
+        
+        if x_type == "column":
+            # Use the data from the specified column index
+            if "index" in x_def:
+                x_idx = x_def["index"]
+                c_name = f"col{x_idx}" if not has_col_names else original_cols[x_idx]
+                if c_name in df.columns:
+                    rename_map[c_name] = x_def.get("name", "x")
+        elif x_type == "index":
+            # Generate an index column (row numbers)
+            df.insert(0, "_x_index", range(len(df)))
+            rename_map["_x_index"] = x_def.get("name", "x")
                 
         # Map Y Axes
         y_defs = columns_mapping.get("y", [])

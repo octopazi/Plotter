@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
         self.data_table_view = QTableView()
         # Optimize view for large data sets
         self.data_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        # Enable editing of headers by double-clicking
+        self.data_table_view.horizontalHeader().setStretchLastSection(False)
         right_layout.addWidget(self.data_table_view)
 
         splitter.addWidget(left_panel)
@@ -170,8 +172,34 @@ class MainWindow(QMainWindow):
             self.table_model = PandasTableModel(dataset.df)
             self.data_table_view.setModel(self.table_model)
             
+            # Enable header editing
+            header = self.data_table_view.horizontalHeader()
+            header.setSectionsClickable(True)
+            header.sectionDoubleClicked.connect(self.edit_header)
+            
             # Edits in PandasTableModel modify dataset.df directly in memory, 
             # so no manual 'sync_edited_data' index mapping is required anymore!
+
+    def edit_header(self, section):
+        """Allow user to edit column header by double-clicking on it."""
+        header = self.data_table_view.horizontalHeader()
+        old_name = self.table_model._data.columns[section]
+        
+        # Show a dialog to get the new column name
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Rename Column",
+            f"Enter new name for column '{old_name}':",
+            text=old_name
+        )
+        
+        if ok and new_name.strip():
+            # Use the model's setHeaderData method to rename
+            success = self.table_model.setHeaderData(section, Qt.Horizontal, new_name, Qt.EditRole)
+            if success:
+                QMessageBox.information(self, "Success", f"Column renamed to '{new_name}'")
+            else:
+                QMessageBox.warning(self, "Error", "Failed to rename column")
 
     def show_file_list_context_menu(self, position):
         """Show a right-click context menu on the dataset list."""
