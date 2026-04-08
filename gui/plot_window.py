@@ -11,11 +11,14 @@ from .plot_settings_dialog import PlotSettingsDialog
 class PlotWindow(QMainWindow):
     """A standalone Plot Window supporting multiple plots, interactive panning/zooming, and scale modifications."""
     def __init__(self, data_frame, x_col, y_cols, plot_type="scatter", window_title=None, parent=None):
-        # We pass parent=None mostly so that these show as separate independent windows that don't block each other.
-        super().__init__(None) 
+        # Pass parent to allow closing this window when parent (MainWindow) closes
+        super().__init__(parent) 
         
         # Ensures that closing the window actually destroys this Qt object
         self.setAttribute(Qt.WA_DeleteOnClose)
+        
+        # Store reference to parent for cleanup
+        self.parent_window = parent
         
         self.df = data_frame
         self.x_col = x_col
@@ -73,6 +76,15 @@ class PlotWindow(QMainWindow):
         # Create Main Axis
         self.ax = self.fig.add_subplot(111)
 
+    def closeEvent(self, event):
+        """Clean up references when the plot window is closed."""
+        if self.parent_window and hasattr(self.parent_window, 'plot_windows'):
+            try:
+                self.parent_window.plot_windows.remove(self)
+            except (ValueError, AttributeError):
+                pass
+        event.accept()
+
     def open_settings_dialog(self):
         dialog = PlotSettingsDialog(self.settings, self)
         if dialog.exec_():
@@ -115,7 +127,7 @@ class PlotWindow(QMainWindow):
 
         # Iterate through all selected Y columns
         for i, y_col in enumerate(self.y_cols):
-            label_prefix = f"{y_col}" if len(self.y_cols) > 1 else "Data"
+            label_prefix = y_col  # Always use the actual column name
             color = colors[i % len(colors)] # Pick color from cycle based on series index
             
             # Determine which axis to use
@@ -161,8 +173,14 @@ class PlotWindow(QMainWindow):
             self.ax2.set_zorder(self.ax.get_zorder() + 1)
             self.ax.set_facecolor("none") # Make primary axis transparent so secondary shows through
             
-        # Add legend to the figure or axis that is on top
-        leg = self.ax.legend(lines, labels)
+        # Remove old legend before creating a new one
+        if self.fig.legends:
+            for leg_obj in self.fig.legends:
+                leg_obj.remove()
+            
+        # Add legend to the figure level for proper draggability and z-order handling
+        # Use 'upper left' as default location since figure legend doesn't support 'best'
+        leg = self.fig.legend(lines, labels, loc='upper right', framealpha=0.95)
         if leg:
             leg.set_draggable(True)
             leg.set_zorder(100) # Ensure it is on the very top

@@ -72,6 +72,16 @@ class MainWindow(QMainWindow):
         # Track active plot windows so they don't get garbage collected
         self.plot_windows = []
 
+    def closeEvent(self, event):
+        """Close all plot windows when the main window is closed."""
+        for plot_win in self.plot_windows:
+            try:
+                plot_win.close()
+            except:
+                pass
+        self.plot_windows.clear()
+        event.accept()
+
     def setup_central_widget(self):
         splitter = QSplitter(Qt.Horizontal)
         self.setCentralWidget(splitter)
@@ -269,7 +279,7 @@ class MainWindow(QMainWindow):
             
             # 2. Show Plot Window after user confirmed input.
             from .plot_window import PlotWindow
-            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type, window_title=f"{dataset.name} - Plot")
+            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type, window_title=f"{dataset.name} - Plot", parent=self)
             
             # Avoid early garbage collection by maintaining references to open plots
             self.plot_windows.append(plot_win)
