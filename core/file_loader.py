@@ -2,6 +2,7 @@ import os
 import json
 import pandas as pd
 from .config_manager import ConfigManager
+from .conversion_handlers import apply_conversions
 
 class FileLoader:
     """Handles the Loading and Parsing of Data Files based on JSON Configurations."""
@@ -165,18 +166,13 @@ class FileLoader:
         df.rename(columns=rename_map, inplace=True)
         
         # 4. Apply Transformations / Conversions AFTER renaming
-        for conv in conversions:
-            new_col = conv.get("name")
-            formula = conv.get("formula")
-            try:
-                # Pandas eval safely evaluates mathematical strings against columns.
-                # Clean up user syntax accidentally using brackets like col[1] instead of col1
-                formula = formula.replace("col[", "col").replace("]", "") 
-                df[new_col] = df.eval(formula)
-            except Exception as e:
-                print(f"Failed to evaluate conversion '{new_col}' with formula '{formula}': {e}")
+        # Conversions run sequentially — a later step can reference a column
+        # produced by an earlier step.  Failures are collected and returned
+        # to the caller rather than silently ignored.
+        conversion_errors = apply_conversions(df, conversions)
                 
         return {
             "metadata": metadata,
-            "dataframe": df
+            "dataframe": df,
+            "conversion_errors": conversion_errors
         }

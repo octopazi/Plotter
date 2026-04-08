@@ -13,6 +13,7 @@
 - [x] **Dataset Viewer / Panel:** Added a UI panel split (QSplitter) with a QListWidget for loaded files and QTableView for data inspection.
 - [x] **Data Modification Hook:** Because `PandasTableModel` holds a direct reference to the `Dataset.df`, UI edits edit the dataframe immediately without reverse-mapping index overhead.
 - [ ] **Formula Error Handling:** Add GUI warning dialogs for when user-defined formulas fail mathematically (e.g., division by zero) instead of just printing to the terminal.
+  - [x] **Resolved via Conversion Handler Module:** Extracted all conversion logic into `core/conversion_handlers.py` with a `HANDLER_REGISTRY` pattern. `apply_conversions()` collects all failures and returns them as structured `ConversionError` objects. `MainWindow` surfaces these as a `QMessageBox.warning` dialog listing each failed step (index, name, type, and error message) after import.
 - [ ] **Loading Indicators:** Add a progress bar or loading spinner for importing large datalog files.
 - [ ] **Enhanced Plot Toolbars:** Potential custom UI for plot saving and figure management beyond the standard Matplotlib toolbar.
 
@@ -28,4 +29,5 @@
 ## Further Discussion Needed
 - [x] **FFT Implementation Strategy:** Implemented via the `DataManager`—FFT results become a new `Dataset` linked to their parent.
 - [ ] **Unit Conversion Library:** Determine if a dedicated unit management system (e.g., Pint) should be integrated into the config system.
+- [ ] **Config GUI — Extended Conversion Types:** The `CreateImportFormatDialog` currently only exposes `expr` (formula) conversions. Update it to support all types in `HANDLER_REGISTRY`: `hex_to_int`, `hex_to_float`, `hex_to_fixedpoint`, `bitmask`, `lookup`, `scale`. Consider a dynamic form that changes fields based on the selected type.
 - [ ] **Data Storage Architecture:** Optimization of memory usage. *Strategy: For massive logs, consider migrating from purely RAM-based Pandas to memory-mapped files (e.g., Dask, Vaex, or PyTables) if active RAM usage exceeds system limits.*

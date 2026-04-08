@@ -127,7 +127,7 @@ class MainWindow(QMainWindow):
             print(f"User requested to import {len(dialog.selected_files)} files using config {dialog.selected_config}")
             try:
                 added_count = 0
-                last_dataset = None
+                all_conversion_errors = []   # (filename, ConversionError) pairs
                 
                 # Load each file and add to DataManager independently
                 for file_path in dialog.selected_files:
@@ -137,15 +137,30 @@ class MainWindow(QMainWindow):
                     df = result['dataframe']
                     metadata = result['metadata']
                     name = os.path.basename(file_path)
+
+                    # Collect conversion errors for this file
+                    for err in result.get('conversion_errors', []):
+                        all_conversion_errors.append((name, err))
                     
                     ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type="raw")
-                    last_dataset = self.data_manager.get_dataset(ds_id)
                     added_count += 1
                 
                 if added_count == 0:
                     return
                 
                 self.update_file_list_widget()
+
+                # Report any conversion errors as a single warning dialog
+                if all_conversion_errors:
+                    lines = []
+                    for filename, err in all_conversion_errors:
+                        lines.append(f"[{filename}]  {err}")
+                    QMessageBox.warning(
+                        self, "Conversion Warnings",
+                        f"{len(all_conversion_errors)} conversion step(s) failed and were skipped.\n"
+                        f"The affected output columns are absent from the dataset.\n\n"
+                        + "\n\n".join(lines)
+                    )
                 
                 # Show summary
                 msg = f"Successfully imported {added_count} file(s)."
