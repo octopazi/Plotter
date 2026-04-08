@@ -61,6 +61,7 @@ class MainWindow(QMainWindow):
         # Tools menu (FFT)
         tools_menu = menubar.addMenu("Tools")
         fft_action = QAction("FFT", self)
+        fft_action.triggered.connect(self.open_fft_dialog)
         tools_menu.addAction(fft_action)
         
         # Track active plot windows so they don't get garbage collected
@@ -154,6 +155,45 @@ class MainWindow(QMainWindow):
             # Edits in PandasTableModel modify dataset.df directly in memory, 
             # so no manual 'sync_edited_data' index mapping is required anymore!
 
+    def show_file_list_context_menu(self, position):
+        """Show a right-click context menu on the dataset list."""
+        item = self.file_list_widget.itemAt(position)
+        if not item:
+            return
+
+        menu = QMenu(self)
+        delete_action = QAction("Delete Dataset", self)
+        delete_action.triggered.connect(self.delete_selected_dataset)
+        menu.addAction(delete_action)
+        menu.exec_(self.file_list_widget.mapToGlobal(position))
+
+    def delete_selected_dataset(self):
+        """Delete the currently selected dataset from the DataManager and refresh the UI."""
+        current_item = self.file_list_widget.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select a dataset to delete.")
+            return
+
+        ds_id = current_item.data(Qt.UserRole)
+        dataset = self.data_manager.get_dataset(ds_id)
+        if not dataset:
+            return
+
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Are you sure you want to delete '{dataset.name}' from memory?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self.data_manager.remove_dataset(ds_id)
+
+        # Clear the table view if the deleted dataset was being displayed
+        self.data_table_view.setModel(None)
+
+        self.update_file_list_widget()
+
     def open_import_config_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Import Config File", "", "JSON Files (*.json);;All Files (*.*)"
@@ -226,6 +266,20 @@ class MainWindow(QMainWindow):
             # Avoid early garbage collection by maintaining references to open plots
             self.plot_windows.append(plot_win)
             plot_win.show()
+
+    def open_fft_dialog(self):
+        from .fft_dialog import FFTDialog
+        dialog = FFTDialog(self.data_manager, parent=self)
+        if dialog.exec_():
+            self.update_file_list_widget()
+            # Auto-select the newly created FFT dataset in the list
+            for i in range(self.file_list_widget.count()):
+                item = self.file_list_widget.item(i)
+                if item.data(Qt.UserRole) == dialog.new_dataset_id:
+                    self.file_list_widget.setCurrentItem(item)
+                    break
+            QMessageBox.information(self, "FFT Complete",
+                                    "FFT result has been added to the dataset list.")
 
     def open_scatter_plot(self):
         # Deprecated: replaced by open_plot_dialog

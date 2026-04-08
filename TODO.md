@@ -25,6 +25,6 @@
 - [ ] **Performance (Resampling):** Implement data downsampling/decimation for smooth plotting of massive datasets (e.g., 250k+ rows). *Strategy: Use LTTB (Largest Triangle Three Buckets) downsampling or simply slice standard skips for the plotting view while keeping the raw data untouched in the DataManager.*
 
 ## Further Discussion Needed
-- [ ] **FFT Implementation Strategy:** Implemented via the `DataManager`—FFT results become a new `Dataset` linked to their parent.
+- [x] **FFT Implementation Strategy:** Implemented via the `DataManager`—FFT results become a new `Dataset` linked to their parent.
 - [ ] **Unit Conversion Library:** Determine if a dedicated unit management system (e.g., Pint) should be integrated into the config system.
 - [ ] **Data Storage Architecture:** Optimization of memory usage. *Strategy: For massive logs, consider migrating from purely RAM-based Pandas to memory-mapped files (e.g., Dask, Vaex, or PyTables) if active RAM usage exceeds system limits.*
