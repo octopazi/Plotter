@@ -33,6 +33,10 @@ class MainWindow(QMainWindow):
         delete_dataset_action.triggered.connect(self.delete_selected_dataset)
         file_menu.addAction(delete_dataset_action)
 
+        export_dataset_action = QAction("Export Dataset", self)
+        export_dataset_action.triggered.connect(self.open_export_dialog)
+        file_menu.addAction(export_dataset_action)
+
         # Config menu
         config_menu = menubar.addMenu("Config")
 
@@ -239,6 +243,15 @@ class MainWindow(QMainWindow):
         self.data_table_view.setModel(None)
 
         self.update_file_list_widget()
+
+    def open_export_dialog(self):
+        """Open the Export Dataset dialog."""
+        if not self.data_manager.datasets:
+            QMessageBox.warning(self, "No Data", "No datasets are loaded. Please import a datalog first.")
+            return
+        from .export_dialog import ExportDialog
+        dialog = ExportDialog(self.data_manager, parent=self)
+        dialog.exec_()
 
     def open_import_config_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
