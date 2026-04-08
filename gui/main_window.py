@@ -1,7 +1,8 @@
 import os
 from PyQt5.QtWidgets import (
     QMainWindow, QAction, QFileDialog, QInputDialog, QMessageBox, 
-    QSplitter, QWidget, QVBoxLayout, QListWidget, QTableView, QLabel, QHeaderView, QListWidgetItem
+    QSplitter, QWidget, QVBoxLayout, QListWidget, QTableView, QLabel, QHeaderView, QListWidgetItem,
+    QMenu
 )
 from PyQt5.QtCore import Qt
 from core.config_manager import ConfigManager
@@ -27,6 +28,10 @@ class MainWindow(QMainWindow):
         import_datalog_action = QAction("Import Datalog", self)
         import_datalog_action.triggered.connect(self.open_import_datalog_dialog)
         file_menu.addAction(import_datalog_action)
+
+        delete_dataset_action = QAction("Delete Dataset", self)
+        delete_dataset_action.triggered.connect(self.delete_selected_dataset)
+        file_menu.addAction(delete_dataset_action)
 
         # Config menu
         config_menu = menubar.addMenu("Config")
@@ -78,6 +83,9 @@ class MainWindow(QMainWindow):
         self.file_list_widget = QListWidget()
         # Connect selection change to updating data viewer
         self.file_list_widget.currentItemChanged.connect(self.on_file_selected)
+        # Enable right-click context menu for deleting datasets
+        self.file_list_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_list_widget.customContextMenuRequested.connect(self.show_file_list_context_menu)
         left_layout.addWidget(self.file_list_widget)
 
         # Right Panel (Data Viewer)

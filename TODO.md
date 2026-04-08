@@ -5,6 +5,7 @@
 - [x] **Multi-File Import:** Updated `ImportDatalogDialog` to allow selecting multiple files at once.
 - [x] **Data Merging/Appending:** Updated `FileLoader` to process multiple files and track origin via `_source_file`.
 - [x] **Dataset State Management (DataManager Architecture):** Refactored `MainWindow` to use a centralized `DataManager` holding `Dataset` objects. Extracted separate file logic from previous concatenated dataframes.
+- [x] **Delete Dataset:** Added "Delete Dataset" via File menu and right-click context menu on the dataset list. Prompts confirmation, removes the dataset from `DataManager`, clears the table view, and refreshes the file list.
 - [ ] **Project Save/Load:** Implement a system to save current project state. *Discussion: Use HDF5 (`.h5`) or Parquet for fast, space-efficient data storage, bundled with a JSON file mapping plot settings, UI states, and dataset relationships.*
 - [ ] **Data Export Function:** Allow users to select specific dataframes and columns to export back to CSV/Excel.
 
