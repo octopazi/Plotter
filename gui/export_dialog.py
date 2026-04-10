@@ -288,8 +288,8 @@ class ExportDialog(QDialog):
             return
 
         try:
-            with __import__('openpyxl').Workbook() as _:
-                pass  # just a quick reachability check
+            wb = __import__('openpyxl').Workbook()
+            wb.close()  # just a quick reachability check
         except ImportError:
             QMessageBox.critical(self, "Missing Dependency",
                                  "The 'openpyxl' package is required for Excel export.\n"
