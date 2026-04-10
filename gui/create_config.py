@@ -3,34 +3,59 @@ import json
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QSpinBox, QListWidget, QGroupBox,
-    QFormLayout, QMessageBox
+    QFormLayout, QMessageBox, QWidget, QDoubleSpinBox,
+    QCheckBox, QTextEdit, QTabWidget
 )
+from PyQt5.QtCore import Qt
+
+from core.conversion_handlers import CONV_FIELD_SPECS, conv_summary
 
 
 class CreateImportFormatDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create Import Format")
-        self.resize(550, 700)
+        self.resize(600, 650)
 
-        main_layout = QVBoxLayout(self)
+        root_layout = QVBoxLayout(self)
 
-        # ----------------------------------------------------
-        # 1. Format Name
-        # ----------------------------------------------------
-        box_format = QGroupBox("Format Name")
-        layout_format = QFormLayout()
+        # ── Format Name (always visible above tabs) ────────
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Format Name:"))
         self.name_edit = QLineEdit()
-        self.name_edit.setToolTip("A unique name for this import format (e.g., 'EngineRuntime_v1'). Used as the filename.")
-        layout_format.addRow("Name:", self.name_edit)
-        box_format.setLayout(layout_format)
-        main_layout.addWidget(box_format)
+        self.name_edit.setToolTip(
+            "A unique name for this import format (e.g., 'EngineRuntime_v1'). Used as the filename."
+        )
+        name_row.addWidget(self.name_edit)
+        root_layout.addLayout(name_row)
 
-        # ----------------------------------------------------
-        # 2. Header Settings
-        # ----------------------------------------------------
+        # ── Tab Widget ─────────────────────────────────────
+        self.tabs = QTabWidget()
+        root_layout.addWidget(self.tabs)
+
+        self._build_tab_file_format()
+        self._build_tab_columns()
+        self._build_tab_conversions()
+
+        # ── Save Button ────────────────────────────────────
+        save_btn = QPushButton("Save")
+        save_btn.clicked.connect(self.save_config)
+        root_layout.addWidget(save_btn)
+
+        # Internal storage
+        self.y_columns = []
+        self.conversions = []
+
+    # ==============================================================
+    #  TAB 1 — File Format  (Header + Data settings)
+    # ==============================================================
+    def _build_tab_file_format(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        # Header Settings
         box_header = QGroupBox("Header Settings")
-        layout_header = QFormLayout()
+        lh = QFormLayout()
 
         self.header_enabled = QComboBox()
         self.header_enabled.addItems(["False", "True"])
@@ -38,172 +63,298 @@ class CreateImportFormatDialog(QDialog):
 
         self.header_lines = QSpinBox()
         self.header_lines.setRange(0, 50)
-        self.header_lines.setToolTip("The total number of rows at the top of the file that contain metadata or non-data text.")
+        self.header_lines.setToolTip("Total number of rows at the top that contain metadata or non-data text.")
 
         self.header_sep = QLineEdit(":")
-        self.header_sep.setToolTip("The character used to separate labels from values in the header lines (e.g. ':' in 'Date: 2024-01-01').")
+        self.header_sep.setToolTip("Character separating labels from values in header lines (e.g. ':').")
 
         self.header_same_as_data = QComboBox()
         self.header_same_as_data.addItems(["False", "True"])
-        self.header_same_as_data.setToolTip("Set to True if the header rows use the same column separator as the data block.")
+        self.header_same_as_data.setToolTip("True if header rows use the same separator as the data block.")
 
         self.header_ignore = QLineEdit("#")
-        self.header_ignore.setToolTip("Ignore any lines in the header area that start with this specific character or string.")
+        self.header_ignore.setToolTip("Ignore header lines starting with this character/string.")
 
-        layout_header.addRow("Header Enabled:", self.header_enabled)
-        layout_header.addRow("Header Lines:", self.header_lines)
-        layout_header.addRow("Header Separator:", self.header_sep)
-        layout_header.addRow("Header Same-As-Data:", self.header_same_as_data)
-        layout_header.addRow("Header Ignore Prefix:", self.header_ignore)
+        lh.addRow("Header Enabled:", self.header_enabled)
+        lh.addRow("Header Lines:", self.header_lines)
+        lh.addRow("Header Separator:", self.header_sep)
+        lh.addRow("Same-As-Data:", self.header_same_as_data)
+        lh.addRow("Ignore Prefix:", self.header_ignore)
+        box_header.setLayout(lh)
+        layout.addWidget(box_header)
 
-        box_header.setLayout(layout_header)
-        main_layout.addWidget(box_header)
-
-        # ----------------------------------------------------
-        # 3. Data Settings
-        # ----------------------------------------------------
+        # Data Settings
         box_data = QGroupBox("Data Settings")
-        layout_data = QFormLayout()
+        ld = QFormLayout()
 
         self.data_sep = QLineEdit(",")
-        self.data_sep.setToolTip("The character separating data values (e.g., ',' for CSV, '\t' for tab-separated).")
+        self.data_sep.setToolTip("Character separating data values (e.g. ',' or '\\t').")
 
         self.data_ignore = QLineEdit("//")
-        self.data_ignore.setToolTip("Ignore any lines within the data block that start with this prefix.")
+        self.data_ignore.setToolTip("Ignore data lines starting with this prefix.")
 
         self.data_header_lines = QSpinBox()
         self.data_header_lines.setRange(0, 10)
-        self.data_header_lines.setToolTip("The number of labels/names rows immediately preceding the data values (usually 1 for CSV column headers).")
+        self.data_header_lines.setToolTip("Number of column-name rows preceding the data (usually 0 or 1).")
 
-        layout_data.addRow("Data Separator:", self.data_sep)
-        layout_data.addRow("Data Ignore Prefix:", self.data_ignore)
-        layout_data.addRow("Data Header Lines:", self.data_header_lines)
+        ld.addRow("Data Separator:", self.data_sep)
+        ld.addRow("Ignore Prefix:", self.data_ignore)
+        ld.addRow("Data Header Lines:", self.data_header_lines)
+        box_data.setLayout(ld)
+        layout.addWidget(box_data)
 
-        box_data.setLayout(layout_data)
-        main_layout.addWidget(box_data)
+        layout.addStretch()
+        self.tabs.addTab(page, "File Format")
 
-        # ----------------------------------------------------
-        # 4. Column Mapping (X & Y)
-        # ----------------------------------------------------
-        box_columns = QGroupBox("Column Mapping")
-        col_layout = QVBoxLayout()
+    # ==============================================================
+    #  TAB 2 — Columns  (X + Y mapping)
+    # ==============================================================
+    def _build_tab_columns(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
 
         # X mapping
-        x_layout = QFormLayout()
+        box_x = QGroupBox("X-Axis Mapping")
+        lx = QFormLayout()
         self.x_type = QComboBox()
         self.x_type.addItems(["column", "index"])
-        self.x_type.setToolTip("'column' = use a specific data column for X-axis; 'index' = generate X-axis as row numbers (0, 1, 2, ...).")
-
+        self.x_type.setToolTip("'column' = use a data column;  'index' = row numbers (0, 1, 2, ...).")
         self.x_index = QSpinBox()
         self.x_index.setRange(0, 50)
-        self.x_index.setToolTip("The zero-based column index to use for the X-axis (only used if X Type is 'column'). Ignored if X Type is 'index'.")
-
-        x_layout.addRow("X Type:", self.x_type)
-        x_layout.addRow("X Column Index:", self.x_index)
-        col_layout.addLayout(x_layout)
+        self.x_index.setToolTip("Zero-based column index for X (ignored if type is 'index').")
+        lx.addRow("X Type:", self.x_type)
+        lx.addRow("X Column Index:", self.x_index)
+        box_x.setLayout(lx)
+        layout.addWidget(box_x)
 
         # Y mapping
-        y_layout = QVBoxLayout()
-        self.y_list = QListWidget()
+        box_y = QGroupBox("Y-Axis Columns")
+        ly = QVBoxLayout()
 
-        y_add_layout = QHBoxLayout()
+        y_add_row = QHBoxLayout()
         self.y_name_edit = QLineEdit()
-        self.y_name_edit.setToolTip("The display name for the Y-axis source.")
+        self.y_name_edit.setToolTip("Display name for this Y column.")
         self.y_index_spin = QSpinBox()
         self.y_index_spin.setRange(0, 50)
-        self.y_index_spin.setToolTip("The zero-based column index in the data file for this Y value.")
-
+        self.y_index_spin.setToolTip("Zero-based column index in the data file.")
         btn_add_y = QPushButton("Add Y")
         btn_add_y.clicked.connect(self.add_y_column)
-
         btn_del_y = QPushButton("Delete Selected")
         btn_del_y.clicked.connect(self.delete_y_column)
 
-        y_add_layout.addWidget(QLabel("Name:"))
-        y_add_layout.addWidget(self.y_name_edit)
-        y_add_layout.addWidget(QLabel("Index:"))
-        y_add_layout.addWidget(self.y_index_spin)
-        y_add_layout.addWidget(btn_add_y)
-        y_add_layout.addWidget(btn_del_y)
+        y_add_row.addWidget(QLabel("Name:"))
+        y_add_row.addWidget(self.y_name_edit)
+        y_add_row.addWidget(QLabel("Index:"))
+        y_add_row.addWidget(self.y_index_spin)
+        y_add_row.addWidget(btn_add_y)
+        y_add_row.addWidget(btn_del_y)
+        ly.addLayout(y_add_row)
 
-        y_layout.addLayout(y_add_layout)
-        y_layout.addWidget(QLabel("Y Columns:"))
-        y_layout.addWidget(self.y_list)
+        self.y_list = QListWidget()
+        ly.addWidget(self.y_list)
+        box_y.setLayout(ly)
+        layout.addWidget(box_y)
 
-        col_layout.addLayout(y_layout)
-        box_columns.setLayout(col_layout)
-        main_layout.addWidget(box_columns)
+        self.tabs.addTab(page, "Columns")
 
-        # Internal storage
-        self.y_columns = []
-        self.conversions = []
+    # ==============================================================
+    #  TAB 3 — Conversions  (metadata-driven dynamic form)
+    # ==============================================================
+    def _build_tab_conversions(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
 
-        # ----------------------------------------------------
-        # 5. Conversion Rules
-        # ----------------------------------------------------
-        box_conv = QGroupBox("Conversions")
-        conv_layout = QVBoxLayout()
-
+        # ── Name + Type selector row ───────────────────────
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Output Name:"))
         self.conv_name = QLineEdit()
-        self.conv_name.setToolTip("A name for this calculated column.")
-        self.conv_formula = QLineEdit()
-        self.conv_formula.setToolTip("Mathematical formula (e.g., 'col1 * 10 + 5'). Use 'col[i]' to reference column indices.")
-        self.conv_output_index = QSpinBox()
-        self.conv_output_index.setRange(0, 100)
-        self.conv_output_index.setToolTip("The virtual column index assigned to the result of this calculation.")
+        self.conv_name.setToolTip("Name of the new output column produced by this step.")
+        self.conv_name.setMinimumWidth(120)
+        top_row.addWidget(self.conv_name)
+        top_row.addSpacing(10)
+        top_row.addWidget(QLabel("Type:"))
+        self.conv_type_combo = QComboBox()
+        self.conv_type_combo.setToolTip("Select the conversion type.")
+        # Populate from the registry — order follows CONV_FIELD_SPECS keys
+        for type_name in CONV_FIELD_SPECS:
+            self.conv_type_combo.addItem(type_name)
+        self.conv_type_combo.currentTextChanged.connect(self._rebuild_conv_fields)
+        top_row.addWidget(self.conv_type_combo)
+        top_row.addStretch()
+        layout.addLayout(top_row)
 
-        btn_add_conv = QPushButton("Add Rule")
-        btn_del_conv = QPushButton("Delete Selected")
+        # ── Dynamic fields area ────────────────────────────
+        self._conv_fields_container = QWidget()
+        self._conv_fields_layout = QFormLayout(self._conv_fields_container)
+        self._conv_fields_layout.setContentsMargins(4, 4, 4, 4)
+        layout.addWidget(self._conv_fields_container)
 
-        # connect buttons
-        btn_add_conv.clicked.connect(self.add_conversion_rule)
-        btn_del_conv.clicked.connect(self.delete_conversion_rule)
+        # Holds references to dynamically-created widgets keyed by field "key"
+        self._conv_widgets = {}
+        self._rebuild_conv_fields(self.conv_type_combo.currentText())
 
-        form_conv = QFormLayout()
-        form_conv.addRow("Name:", self.conv_name)
-        form_conv.addRow("Formula:", self.conv_formula)
-        form_conv.addRow("Output Index:", self.conv_output_index)
+        # ── Buttons row ────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("Add Rule")
+        btn_add.setToolTip("Append this conversion step to the list.")
+        btn_del = QPushButton("Delete Selected")
+        btn_del.setToolTip("Remove the selected step.")
+        btn_up = QPushButton("▲ Move Up")
+        btn_up.setToolTip("Move earlier (order matters for chaining).")
+        btn_down = QPushButton("▼ Move Down")
+        btn_down.setToolTip("Move later.")
+        btn_add.clicked.connect(self.add_conversion_rule)
+        btn_del.clicked.connect(self.delete_conversion_rule)
+        btn_up.clicked.connect(self.move_conversion_up)
+        btn_down.clicked.connect(self.move_conversion_down)
+        btn_row.addWidget(btn_add)
+        btn_row.addWidget(btn_del)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_up)
+        btn_row.addWidget(btn_down)
+        layout.addLayout(btn_row)
 
-        conv_layout.addLayout(form_conv)
-
-        btn_conv_layout = QHBoxLayout()
-        btn_conv_layout.addWidget(btn_add_conv)
-        btn_conv_layout.addWidget(btn_del_conv)
-        conv_layout.addLayout(btn_conv_layout)
-
+        # ── Conversion list ────────────────────────────────
+        layout.addWidget(QLabel(
+            "⚠ Conversions run top-to-bottom. A step can reference columns from earlier steps."
+        ))
         self.conv_list = QListWidget()
-        conv_layout.addWidget(QLabel("Conversion Rules:"))
-        conv_layout.addWidget(self.conv_list)
+        layout.addWidget(self.conv_list)
 
-        box_conv.setLayout(conv_layout)
-        main_layout.addWidget(box_conv)
+        self.tabs.addTab(page, "Conversions")
 
-        # ----------------------------------------------------
-        # 6. Save Button
-        # ----------------------------------------------------
-        save_btn = QPushButton("Save")
-        save_btn.clicked.connect(self.save_config)
-        main_layout.addWidget(save_btn)
+    # ==============================================================
+    #  Dynamic Field Builder — reads CONV_FIELD_SPECS at runtime
+    # ==============================================================
+    def _rebuild_conv_fields(self, conv_type):
+        """Tear down and rebuild the dynamic field form for *conv_type*."""
+        # Remove old widgets
+        while self._conv_fields_layout.count():
+            item = self._conv_fields_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
 
-    # ======================================================
-    #  ADD Y COLUMN
-    # ======================================================
+        self._conv_widgets = {}
+        specs = CONV_FIELD_SPECS.get(conv_type, [])
+
+        for spec in specs:
+            key     = spec["key"]
+            label   = spec.get("label", key)
+            wtype   = spec["widget"]
+            tooltip = spec.get("tooltip", "")
+
+            if wtype == "lineedit":
+                w = QLineEdit()
+                w.setPlaceholderText(spec.get("placeholder", ""))
+                if "default" in spec:
+                    w.setText(str(spec["default"]))
+
+            elif wtype == "spinbox":
+                w = QSpinBox()
+                w.setRange(spec.get("min", 0), spec.get("max", 100))
+                w.setSingleStep(spec.get("step", 1))
+                w.setValue(spec.get("default", 0))
+
+            elif wtype == "doublespinbox":
+                w = QDoubleSpinBox()
+                w.setRange(spec.get("min", 0), spec.get("max", 1e12))
+                w.setDecimals(spec.get("decimals", 4))
+                w.setSingleStep(spec.get("step", 1))
+                w.setValue(spec.get("default", 0.0))
+
+            elif wtype == "checkbox":
+                w = QCheckBox(label)
+                w.setChecked(spec.get("default", False))
+                # For checkboxes the label is inside the widget; use empty label in form
+                w.setToolTip(tooltip)
+                self._conv_fields_layout.addRow("", w)
+                self._conv_widgets[key] = w
+                continue
+
+            elif wtype == "combo":
+                w = QComboBox()
+                for item_text in spec.get("items", []):
+                    w.addItem(item_text)
+                default = spec.get("default", "")
+                if default:
+                    idx = w.findText(str(default))
+                    if idx >= 0:
+                        w.setCurrentIndex(idx)
+
+            elif wtype == "textedit":
+                w = QTextEdit()
+                w.setPlaceholderText(spec.get("placeholder", ""))
+                if spec.get("height"):
+                    w.setFixedHeight(spec["height"])
+                if "default" in spec:
+                    w.setPlainText(str(spec["default"]))
+
+            else:
+                continue   # skip unknown widget types gracefully
+
+            w.setToolTip(tooltip)
+            self._conv_fields_layout.addRow(f"{label}:", w)
+            self._conv_widgets[key] = w
+
+    def _read_conv_widget_value(self, key):
+        """Read the current value from a dynamically-created conversion widget."""
+        w = self._conv_widgets.get(key)
+        if w is None:
+            return None
+        if isinstance(w, QLineEdit):
+            return w.text().strip()
+        elif isinstance(w, QSpinBox):
+            return w.value()
+        elif isinstance(w, QDoubleSpinBox):
+            return w.value()
+        elif isinstance(w, QCheckBox):
+            return w.isChecked()
+        elif isinstance(w, QComboBox):
+            return w.currentText()
+        elif isinstance(w, QTextEdit):
+            return w.toPlainText().strip()
+        return None
+
+    def _reset_conv_widgets(self):
+        """Reset all dynamic conversion widgets to their spec defaults."""
+        conv_type = self.conv_type_combo.currentText()
+        specs = CONV_FIELD_SPECS.get(conv_type, [])
+        for spec in specs:
+            key = spec["key"]
+            w = self._conv_widgets.get(key)
+            if w is None:
+                continue
+            if isinstance(w, QLineEdit):
+                w.clear()
+            elif isinstance(w, QSpinBox):
+                w.setValue(spec.get("default", 0))
+            elif isinstance(w, QDoubleSpinBox):
+                w.setValue(spec.get("default", 0.0))
+            elif isinstance(w, QCheckBox):
+                w.setChecked(spec.get("default", False))
+            elif isinstance(w, QComboBox):
+                default = spec.get("default", "")
+                idx = w.findText(str(default))
+                if idx >= 0:
+                    w.setCurrentIndex(idx)
+            elif isinstance(w, QTextEdit):
+                w.clear()
+        self.conv_name.clear()
+
+    # ==============================================================
+    #  Y Column Helpers
+    # ==============================================================
     def add_y_column(self):
         name = self.y_name_edit.text().strip()
         index = self.y_index_spin.value()
-
         if not name:
             QMessageBox.warning(self, "Error", "Y column name cannot be empty.")
             return
-
         self.y_columns.append({"name": name, "index": index})
         self.y_list.addItem(f"{name} (index {index})")
-
         self.y_name_edit.clear()
 
-    # ======================================================
-    # DELETE Y COLUMN
-    # ======================================================
     def delete_y_column(self):
         selected = self.y_list.currentRow()
         if selected >= 0:
@@ -212,45 +363,108 @@ class CreateImportFormatDialog(QDialog):
         else:
             QMessageBox.warning(self, "Error", "No Y column selected.")
 
-    # ======================================================
-    # ADD CONVERSION RULE
-    # ======================================================
+    # ==============================================================
+    #  Conversion Rule Helpers
+    # ==============================================================
     def add_conversion_rule(self):
-        name = self.conv_name.text().strip()
-        formula = self.conv_formula.text().strip()
-        idx = self.conv_output_index.value()
+        output_name = self.conv_name.text().strip()
+        conv_type = self.conv_type_combo.currentText()
 
-        if not name or not formula:
-            QMessageBox.warning(self, "Error", "Conversion name and formula required.")
+        if not output_name:
+            QMessageBox.warning(self, "Error", "Output Name cannot be empty.")
             return
 
-        conv = {
-            "name": name,
-            "formula": formula,
-            "output_index": idx
-        }
+        specs = CONV_FIELD_SPECS.get(conv_type, [])
+        conv = {"name": output_name, "type": conv_type}
+
+        # Collect values from dynamic widgets
+        for spec in specs:
+            key = spec["key"]
+            value = self._read_conv_widget_value(key)
+
+            # Validate required fields
+            if spec.get("required") and (value is None or value == ""):
+                QMessageBox.warning(
+                    self, "Error",
+                    f"'{spec.get('label', key)}' is required for type '{conv_type}'."
+                )
+                return
+
+            # Special handling for the lookup "map" field — parse key=value lines
+            if key == "map" and conv_type == "lookup":
+                map_dict = {}
+                for line in (value or "").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if "=" not in line:
+                        QMessageBox.warning(
+                            self, "Error",
+                            f"Invalid map line (expected 'key=value'):\n  {line}"
+                        )
+                        return
+                    k, v = line.split("=", 1)
+                    map_dict[k.strip()] = v.strip()
+                conv[key] = map_dict
+                continue
+
+            # Skip falsy optional values so the JSON stays clean
+            if value is None or value == "" or value is False:
+                if spec.get("required"):
+                    conv[key] = value
+                continue
+
+            conv[key] = value
 
         self.conversions.append(conv)
-        self.conv_list.addItem(f"{name}: {formula} -> col {idx}")
+        summary = conv_summary(conv)
+        self.conv_list.addItem(f"[{len(self.conversions)}] {output_name}  ←  {summary}")
+        self._reset_conv_widgets()
 
-        # Clear fields
-        self.conv_name.clear()
-        self.conv_formula.clear()
-
-    # ======================================================
-    # DELETE CONVERSION RULE
-    # ======================================================
     def delete_conversion_rule(self):
         selected = self.conv_list.currentRow()
         if selected >= 0:
             self.conv_list.takeItem(selected)
             self.conversions.pop(selected)
+            self._refresh_conv_list_labels()
         else:
             QMessageBox.warning(self, "Error", "No conversion rule selected.")
 
-    # ======================================================
-    # SAVE CONFIG FILE
-    # ======================================================
+    def move_conversion_up(self):
+        row = self.conv_list.currentRow()
+        if row <= 0:
+            return
+        self.conversions[row], self.conversions[row - 1] = (
+            self.conversions[row - 1], self.conversions[row]
+        )
+        item = self.conv_list.takeItem(row)
+        self.conv_list.insertItem(row - 1, item)
+        self.conv_list.setCurrentRow(row - 1)
+        self._refresh_conv_list_labels()
+
+    def move_conversion_down(self):
+        row = self.conv_list.currentRow()
+        if row < 0 or row >= self.conv_list.count() - 1:
+            return
+        self.conversions[row], self.conversions[row + 1] = (
+            self.conversions[row + 1], self.conversions[row]
+        )
+        item = self.conv_list.takeItem(row)
+        self.conv_list.insertItem(row + 1, item)
+        self.conv_list.setCurrentRow(row + 1)
+        self._refresh_conv_list_labels()
+
+    def _refresh_conv_list_labels(self):
+        for i in range(self.conv_list.count()):
+            item = self.conv_list.item(i)
+            text = item.text()
+            if text.startswith("["):
+                text = text[text.index("]") + 1:].lstrip()
+            item.setText(f"[{i + 1}] {text}")
+
+    # ==============================================================
+    #  Save
+    # ==============================================================
     def save_config(self):
         name = self.name_edit.text().strip()
         if not name:
@@ -266,7 +480,7 @@ class CreateImportFormatDialog(QDialog):
                 "same_as_data": self.header_same_as_data.currentText() == "True",
                 "ignore_prefix": self.header_ignore.text(),
                 "fields": [],
-                "column_names_from_header": False
+                "column_names_from_header": False,
             },
             "data": {
                 "separator": self.data_sep.text(),
@@ -275,34 +489,36 @@ class CreateImportFormatDialog(QDialog):
                 "columns": {
                     "x": {
                         "type": self.x_type.currentText(),
-                        "index": self.x_index.value()
+                        "index": self.x_index.value(),
                     },
-                    "y": self.y_columns
-                }
+                    "y": self.y_columns,
+                },
             },
-            "conversions": self.conversions
+            "conversions": self.conversions,
         }
 
-        # Save to ./Config/
         config_dir = os.path.join(os.getcwd(), "Config")
         os.makedirs(config_dir, exist_ok=True)
-
         save_path = os.path.join(config_dir, f"{name}.json")
 
         with open(save_path, "w") as f:
             json.dump(config, f, indent=4)
 
         QMessageBox.information(self, "Saved", f"Saved to: {save_path}")
-        self.accept()  # Close dialog
+        self.accept()
 
+
+# ==================================================================
+#  Edit Dialog — inherits everything, just pre-fills from a config
+# ==================================================================
 class EditImportFormatDialog(CreateImportFormatDialog):
     def __init__(self, config_path, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Edit Import Format")
         self.config_path = config_path
-        self.load_config()
+        self._load_config()
 
-    def load_config(self):
+    def _load_config(self):
         try:
             with open(self.config_path, "r") as f:
                 config = json.load(f)
@@ -314,40 +530,40 @@ class EditImportFormatDialog(CreateImportFormatDialog):
         # 1. Format Name
         self.name_edit.setText(config.get("name", ""))
 
-        # 2. Header Settings
-        header = config.get("header", {})
-        self.header_enabled.setCurrentText("True" if header.get("enabled", False) else "False")
-        self.header_lines.setValue(header.get("lines", 0))
-        self.header_sep.setText(header.get("separator", ""))
-        self.header_same_as_data.setCurrentText("True" if header.get("same_as_data", False) else "False")
-        self.header_ignore.setText(header.get("ignore_prefix", ""))
+        # 2. Header
+        h = config.get("header", {})
+        self.header_enabled.setCurrentText("True" if h.get("enabled") else "False")
+        self.header_lines.setValue(h.get("lines", 0))
+        self.header_sep.setText(h.get("separator", ""))
+        self.header_same_as_data.setCurrentText("True" if h.get("same_as_data") else "False")
+        self.header_ignore.setText(h.get("ignore_prefix", ""))
 
-        # 3. Data Settings
-        data = config.get("data", {})
-        self.data_sep.setText(data.get("separator", ","))
-        self.data_ignore.setText(data.get("ignore_prefix", "//"))
-        self.data_header_lines.setValue(data.get("header_lines", 0))
+        # 3. Data
+        d = config.get("data", {})
+        self.data_sep.setText(d.get("separator", ","))
+        self.data_ignore.setText(d.get("ignore_prefix", "//"))
+        self.data_header_lines.setValue(d.get("header_lines", 0))
 
-        # 4. Column Mapping
-        columns = data.get("columns", {})
-        x_col = columns.get("x", {})
-        self.x_type.setCurrentText(x_col.get("type", "column"))
-        self.x_index.setValue(x_col.get("index", 0))
+        # 4. Columns
+        cols = d.get("columns", {})
+        xc = cols.get("x", {})
+        self.x_type.setCurrentText(xc.get("type", "column"))
+        self.x_index.setValue(xc.get("index", 0))
 
         self.y_columns = []
         self.y_list.clear()
-        for y_col in columns.get("y", []):
-            name = y_col.get("name", "")
-            index = y_col.get("index", 0)
-            self.y_columns.append({"name": name, "index": index})
-            self.y_list.addItem(f"{name} (index {index})")
+        for yc in cols.get("y", []):
+            n = yc.get("name", "")
+            i = yc.get("index", 0)
+            self.y_columns.append({"name": n, "index": i})
+            self.y_list.addItem(f"{n} (index {i})")
 
-        # 5. Conversion Rules
+        # 5. Conversions
         self.conversions = []
         self.conv_list.clear()
-        for conv in config.get("conversions", []):
-            name = conv.get("name", "")
-            formula = conv.get("formula", "")
-            idx = conv.get("output_index", 0)
-            self.conversions.append({"name": name, "formula": formula, "output_index": idx})
-            self.conv_list.addItem(f"{name}: {formula} -> col {idx}")
+        for step_idx, c in enumerate(config.get("conversions", []), start=1):
+            self.conversions.append(c)
+            summary = conv_summary(c)
+            self.conv_list.addItem(
+                f"[{step_idx}] {c.get('name', '')}  ←  {summary}"
+            )

@@ -40,9 +40,11 @@ import struct
 def _parse_hex_str(s):
     """Convert a hex string (with or without '0x'/'0X' prefix) to int."""
     s = str(s).strip()
-    if s.lower().startswith("0x"):
+    # Always parse as hex (base 16), regardless of prefix
+    try:
         return int(s, 16)
-    return int(s, 16)
+    except Exception as e:
+        raise ValueError(f"Could not parse hex string '{s}': {e}")
 
 
 def _col(df, conv, key="source"):
@@ -205,19 +207,20 @@ def _handle_bitmask(df, conv):
     if mask_val is None:
         raise ValueError("'mask' field is required for type 'bitmask'.")
 
-    # Accept both integer and hex-string mask
+    # Always parse string mask as hex (with or without 0x prefix)
     if isinstance(mask_val, str):
-        mask_int = int(mask_val, 16) if mask_val.lower().startswith("0x") else int(mask_val)
+        mask_int = _parse_hex_str(mask_val)
     else:
         mask_int = int(mask_val)
 
     shift = int(conv.get("shift", 0))
 
-    # If the source column is strings (hex), convert first
-    if series.dtype == object:
-        series = series.apply(_parse_hex_str)
+    # Always parse string values in the series as hex
+    if series.dtype == object or series.apply(lambda v: isinstance(v, str)).any():
+        series = series.apply(lambda v: _parse_hex_str(v) if isinstance(v, str) else v)
 
-    return ((series.astype("int64") & mask_int) >> shift)
+    # Use numpy for element-wise right shift
+    return np.right_shift(series.astype("int64") & mask_int, shift)
 
 
 def _handle_lookup(df, conv):
@@ -287,6 +290,218 @@ HANDLER_REGISTRY = {
     "lookup":             _handle_lookup,
     "scale":              _handle_scale,
 }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GUI Field Specifications  (drives the Config dialog dynamically)
+#
+#  Each type maps to a list of field-spec dicts.  The GUI reads these at
+#  runtime and builds the form — no per-type widget code in the GUI module.
+#
+#  Supported "widget" values:
+#    "lineedit"      – QLineEdit             (value: str)
+#    "spinbox"       – QSpinBox              (value: int)
+#    "doublespinbox" – QDoubleSpinBox        (value: float)
+#    "checkbox"      – QCheckBox             (value: bool)
+#    "combo"         – QComboBox             (value: str)
+#    "textedit"      – QTextEdit (multiline) (value: str)
+#
+#  Optional spec keys:
+#    "required"  – if True, non-empty check before add  (default False)
+#    "default"   – initial value
+#    "tooltip"   – widget tooltip
+#    "placeholder" – placeholder text (lineedit / textedit)
+#    "min", "max", "step", "decimals" – for numeric spinboxes
+#    "items"     – list of strings for combo
+#    "height"    – fixed pixel height (textedit)
+#
+#  To add a NEW conversion type:
+#    1. Write _handle_xxx() and add it to HANDLER_REGISTRY.
+#    2. Add "xxx": [...] to CONV_FIELD_SPECS below.
+#    That's it — the GUI will pick it up automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+CONV_FIELD_SPECS = {
+    "expr": [
+        {
+            "key": "formula", "label": "Formula", "widget": "lineedit",
+            "required": True,
+            "placeholder": "e.g. raw_adc * 3.3 / 4096",
+            "tooltip": (
+                "Pandas-eval math expression using mapped column names.\n"
+                "Example: 'TC1 / 1000'  or  'col2 * 0.5 + offset'"
+            ),
+        },
+    ],
+
+    "hex_to_int": [
+        {
+            "key": "source", "label": "Source Column", "widget": "lineedit",
+            "required": True,
+            "placeholder": "source column name",
+            "tooltip": "Source column containing hex strings (e.g. '0xAA00' or 'AA00').",
+        },
+        {
+            "key": "signed", "label": "Signed (two's complement)", "widget": "checkbox",
+            "default": False,
+            "tooltip": "Enable to interpret the hex value as a signed integer.",
+        },
+        {
+            "key": "bits", "label": "Word Size (bits)", "widget": "spinbox",
+            "default": 32, "min": 8, "max": 64,
+            "tooltip": "Word size in bits used for signed interpretation (8, 16, 32, or 64).",
+        },
+    ],
+
+    "hex_to_float": [
+        {
+            "key": "source", "label": "Source Column", "widget": "lineedit",
+            "required": True,
+            "placeholder": "source column name",
+            "tooltip": "Source column containing hex strings.",
+        },
+        {
+            "key": "method", "label": "Method", "widget": "combo",
+            "items": ["ieee754", "divide"], "default": "ieee754",
+            "tooltip": (
+                "ieee754: reinterpret raw hex bytes as IEEE-754 float.\n"
+                "divide:  convert hex → int, then divide by 'Divisor'."
+            ),
+        },
+        {
+            "key": "bits", "label": "Bits (ieee754)", "widget": "spinbox",
+            "default": 32, "min": 32, "max": 64, "step": 32,
+            "tooltip": "32 = float32,  64 = float64  (only for ieee754 method).",
+        },
+        {
+            "key": "divisor", "label": "Divisor (divide)", "widget": "doublespinbox",
+            "default": 1000.0, "min": 0.000001, "max": 1e12, "decimals": 6,
+            "tooltip": "Divisor applied after int conversion  (only for 'divide' method).",
+        },
+    ],
+
+    "hex_to_fixedpoint": [
+        {
+            "key": "source", "label": "Source Column", "widget": "lineedit",
+            "required": True,
+            "placeholder": "source column name",
+            "tooltip": "Source column containing hex strings.",
+        },
+        {
+            "key": "frac_bits", "label": "Fractional Bits", "widget": "spinbox",
+            "default": 8, "min": 1, "max": 63,
+            "tooltip": (
+                "Number of fractional bits (Q format).  result = int(hex) / 2^frac_bits\n"
+                "Example: Q8.8 unsigned → frac_bits = 8"
+            ),
+        },
+        {
+            "key": "signed", "label": "Signed (two's complement)", "widget": "checkbox",
+            "default": False,
+            "tooltip": "Enable for signed fixed-point (e.g. Q1.15).",
+        },
+        {
+            "key": "bits", "label": "Word Size (bits)", "widget": "spinbox",
+            "default": 16, "min": 8, "max": 64,
+            "tooltip": "Word size in bits used for signed check.",
+        },
+    ],
+
+    "bitmask": [
+        {
+            "key": "source", "label": "Source Column", "widget": "lineedit",
+            "required": True,
+            "placeholder": "source column name",
+            "tooltip": "Source column (integer or hex-string — auto-converted).",
+        },
+        {
+            "key": "mask", "label": "Mask", "widget": "lineedit",
+            "required": True,
+            "placeholder": "e.g. 0x00FF",
+            "tooltip": "Bitmask to apply, e.g. '0x00FF' or '255'.",
+        },
+        {
+            "key": "shift", "label": "Shift (bits)", "widget": "spinbox",
+            "default": 0, "min": 0, "max": 63,
+            "tooltip": "Right-shift amount after masking.  result = (source & mask) >> shift",
+        },
+    ],
+
+    "lookup": [
+        {
+            "key": "source", "label": "Source Column", "widget": "lineedit",
+            "required": True,
+            "placeholder": "source column name",
+            "tooltip": "Source column whose values will be mapped.",
+        },
+        {
+            "key": "default", "label": "Default Value", "widget": "lineedit",
+            "placeholder": "(optional) e.g. UNKNOWN",
+            "tooltip": "Value for entries not found in the map.  Leave blank to keep the original value.",
+        },
+        {
+            "key": "map", "label": "Map (key=value per line)", "widget": "textedit",
+            "required": True,
+            "placeholder": "0=IDLE\n1=RUN\n2=FAULT",
+            "height": 90,
+            "tooltip": (
+                "Enter one mapping per line as  key=value\n"
+                "Example:\n  0=IDLE\n  1=RUN\n  2=FAULT"
+            ),
+        },
+    ],
+
+    "scale": [
+        {
+            "key": "source", "label": "Source Column", "widget": "lineedit",
+            "required": True,
+            "placeholder": "source column name",
+            "tooltip": "Source column to scale.  result = source * factor + offset",
+        },
+        {
+            "key": "factor", "label": "Factor", "widget": "doublespinbox",
+            "default": 1.0, "min": -1e12, "max": 1e12, "decimals": 8,
+            "tooltip": "Multiplicative scale factor.",
+        },
+        {
+            "key": "offset", "label": "Offset", "widget": "doublespinbox",
+            "default": 0.0, "min": -1e12, "max": 1e12, "decimals": 8,
+            "tooltip": "Additive offset applied after scaling.",
+        },
+    ],
+}
+
+
+def conv_summary(conv):
+    """
+    Generate a one-line human-readable description from a conversion dict.
+    Used by the config GUI to populate list widget items.
+    Centralised here so the GUI never needs per-type formatting knowledge.
+    """
+    t = conv.get("type", "expr")
+    if t == "expr":
+        return f"expr: {conv.get('formula', '')}"
+    elif t == "hex_to_int":
+        signed = " signed" if conv.get("signed") else ""
+        return f"hex_to_int({conv.get('source', '')}){signed}"
+    elif t == "hex_to_float":
+        method = conv.get("method", "ieee754")
+        if method == "ieee754":
+            return f"hex_to_float({conv.get('source', '')}, ieee754 {conv.get('bits', 32)}bit)"
+        else:
+            return f"hex_to_float({conv.get('source', '')}, ÷{conv.get('divisor', '')})"
+    elif t == "hex_to_fixedpoint":
+        return f"hex_to_fixedpoint({conv.get('source', '')}, Q.{conv.get('frac_bits', '')})"
+    elif t == "bitmask":
+        return (f"bitmask({conv.get('source', '')} & {conv.get('mask', '')} "
+                f">> {conv.get('shift', 0)})")
+    elif t == "lookup":
+        n = len(conv.get("map", {}))
+        return f"lookup({conv.get('source', '')}, {n} entries)"
+    elif t == "scale":
+        return (f"scale({conv.get('source', '')} "
+                f"× {conv.get('factor', '')} + {conv.get('offset', 0)})")
+    return t
 
 
 # ─────────────────────────────────────────────────────────────────────────────
