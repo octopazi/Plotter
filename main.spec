@@ -6,7 +6,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('full_config_reference.json', '.'),
+        ('full_config_reference.json', 'Config'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -42,5 +42,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='main',
+    name='Plotter',
 )
