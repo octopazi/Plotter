@@ -501,7 +501,24 @@ class CreateImportFormatDialog(QDialog):
         os.makedirs(config_dir, exist_ok=True)
         save_path = os.path.join(config_dir, f"{name}.json")
 
-        with open(save_path, "w") as f:
+        current_path = getattr(self, "config_path", None)
+        is_same_file = (
+            current_path is not None
+            and os.path.abspath(current_path) == os.path.abspath(save_path)
+        )
+
+        if os.path.exists(save_path) and not is_same_file:
+            reply = QMessageBox.question(
+                self,
+                "Overwrite Config",
+                f"A config named '{name}.json' already exists. Overwrite it?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        with open(save_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
 
         QMessageBox.information(self, "Saved", f"Saved to: {save_path}")
@@ -520,12 +537,16 @@ class EditImportFormatDialog(CreateImportFormatDialog):
 
     def _load_config(self):
         try:
-            with open(self.config_path, "r") as f:
+            with open(self.config_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load config file:\n{e}")
             self.reject()
             return
+
+        filename_stem = os.path.splitext(os.path.basename(self.config_path))[0]
+        if config.get("name") != filename_stem:
+            config["name"] = filename_stem
 
         # 1. Format Name
         self.name_edit.setText(config.get("name", ""))
@@ -567,3 +588,34 @@ class EditImportFormatDialog(CreateImportFormatDialog):
             self.conv_list.addItem(
                 f"[{step_idx}] {c.get('name', '')}  ←  {summary}"
             )
+
+    def save_config(self):
+        new_name = self.name_edit.text().strip()
+        old_name = os.path.splitext(os.path.basename(self.config_path))[0]
+
+        if not new_name:
+            QMessageBox.warning(self, "Error", "Format Name cannot be empty.")
+            return
+
+        config_dir = os.path.dirname(self.config_path)
+        new_path = os.path.join(config_dir, f"{new_name}.json")
+
+        if new_name != old_name:
+            if os.path.exists(new_path):
+                reply = QMessageBox.question(
+                    self,
+                    "Overwrite Config",
+                    f"A config named '{new_name}.json' already exists. Overwrite it?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    return
+                os.remove(new_path)
+
+            if os.path.exists(self.config_path):
+                os.remove(self.config_path)
+
+            self.config_path = new_path
+
+        super().save_config()

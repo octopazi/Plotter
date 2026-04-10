@@ -9,7 +9,7 @@
 - [ ] **Project Save/Load:** Implement a system to save current project state. *Discussion: Use HDF5 (`.h5`) or Parquet for fast, space-efficient data storage, bundled with a JSON file mapping plot settings, UI states, and dataset relationships.*
 - [x] **Data Export Function:** Users can open `File → Export Dataset` to select any combination of loaded datasets via checkboxes and export them as CSV (one file per dataset) or as a single Excel workbook (each dataset on a separate, customisable sheet).
 
-- [ ] **Config 'Format Name' Consistency:** Enforce that the config's "format name" always matches the filename (without extension) on load/save. Automatically update the field to prevent ambiguity and accidental duplication. If a user renames a config file, update the "format name" accordingly when loading.
+- [x] **Config 'Format Name' Consistency:** Enforce that the config's "format name" always matches the filename (without extension) on load/save. Automatically update the field to prevent ambiguity and accidental duplication. If a user renames a config file, update the "format name" accordingly when loading.
 
 ## User Experience (UX) & Polish
 - [x] **Dataset Viewer / Panel:** Added a UI panel split (QSplitter) with a QListWidget for loaded files and QTableView for data inspection.
