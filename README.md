@@ -1,6 +1,16 @@
-# Plotter
+
+# Plotter ![Alpha](https://img.shields.io/badge/status-alpha-orange)
 
 A desktop GUI tool for importing, converting, analyzing, and plotting data from raw CSV or text files. Designed for flexibility, extensibility, and ease of use for scientific and engineering data workflows.
+
+**Version:** 0.1.0-alpha
+
+---
+
+## 🚧 Alpha Release Notice
+This is an **alpha release** for early user feedback. Features and UI may change. Please report any bugs or suggestions (see Feedback below).
+
+---
 
 ## Features
 - **Customizable Data Import:**
@@ -16,7 +26,7 @@ A desktop GUI tool for importing, converting, analyzing, and plotting data from 
 ## Architecture Overview
 - **GUI:** Built with PyQt5. Main window and dialogs in `gui/`.
 - **Config System:**
-  - Create different data import format base on the config system, support header/data column naming, import conversion and basic filters
+  - Create different data import formats based on the config system, supporting header/data column naming, import conversion, and basic filters.
 - **Backend Logic:**
   - Placeholder modules in `core/` for config management, file loading, and analysis tools.
 
@@ -50,8 +60,11 @@ core/                    # Backend logic (placeholders for now)
 - **Add a new analysis tool:** Implement as a module in `core/` and connect to the GUI.
 - **Extend plotting:** Update plotting logic in the GUI to support new plot types or features.
 
+## Feedback & Issues
+- Please report bugs, suggestions, or UX feedback via [GitHub Issues](https://github.com/octopazi/Plotter/issues) or by contacting the maintainer.
+- For questions on config structure or extending features, see the sample configs and GUI dialog code.
+
 ## Notes
 - The project is under active development. Some backend modules are placeholders.
-- For questions on config structure or extending features, see the sample configs and GUI dialog code.
 
 ---
