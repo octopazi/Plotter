@@ -20,5 +20,8 @@ build/
 htmlcov/
 
 # Sample config files
-Sample/
 Config/
+Sample/
+
+#Test data files
+TestData/

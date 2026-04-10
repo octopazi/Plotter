@@ -1,0 +1,215 @@
+{
+  "_comment": "full_config_reference.json — Complete reference for all supported conversion types.",
+  "_note": "This file is documentation only. Copy the relevant 'conversions' entries into your real config.",
+
+  "name": "full_reference",
+
+  "header": {
+    "enabled": true,
+    "lines": 5,
+    "separator": ":",
+    "same_as_data": false,
+    "ignore_prefix": "#",
+    "fields": [
+      { "match": "Date",     "key": "date",     "type": "string" },
+      { "match": "Version",  "key": "version",  "type": "string" },
+      { "match": "SampleHz", "key": "sample_hz","type": "float"  }
+    ],
+    "column_names_from_header": false
+  },
+
+  "data": {
+    "separator": ",",
+    "ignore_prefix": "//",
+    "header_lines": 1,
+    "columns": {
+      "x": { "type": "column", "index": 0, "name": "time_ms" },
+      "y": [
+        { "name": "raw_adc",   "index": 1 },
+        { "name": "raw_hex",   "index": 2 },
+        { "name": "raw_word",  "index": 3 },
+        { "name": "mode_code", "index": 4 }
+      ]
+    }
+  },
+
+  "conversions": [
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: expr  (DEFAULT — math expression via pandas eval)",
+      "_doc3": "──────────────────────────────────────────────────────────",
+      "name":    "voltage",
+      "type":    "expr",
+      "formula": "raw_adc * 3.3 / 4096"
+    },
+    {
+      "_doc": "Omitting 'type' is equivalent to type='expr' (backward-compatible).",
+      "name":    "voltage_legacy",
+      "formula": "raw_adc * 3.3 / 4096"
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: hex_to_int  — hex string → integer",
+      "_doc3": "──────────────────────────────────────────────────────────",
+      "_doc4": "Accepts '0xAA00', 'AA00', '0XAA00' (case-insensitive, prefix optional).",
+      "name":   "value_uint",
+      "type":   "hex_to_int",
+      "source": "raw_hex"
+    },
+    {
+      "_doc": "Signed interpretation (two's complement).",
+      "name":   "value_int16",
+      "type":   "hex_to_int",
+      "source": "raw_hex",
+      "signed": true,
+      "bits":   16
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: hex_to_float  — hex string → float",
+      "_doc3": "──────────────────────────────────────────────────────────",
+      "_doc4": "Method 'ieee754': raw hex bytes reinterpreted as IEEE-754 float.",
+      "name":   "ieee_float32",
+      "type":   "hex_to_float",
+      "source": "raw_hex",
+      "method": "ieee754",
+      "bits":   32
+    },
+    {
+      "_doc": "Method 'ieee754' with 64-bit (double).",
+      "name":   "ieee_float64",
+      "type":   "hex_to_float",
+      "source": "raw_hex",
+      "method": "ieee754",
+      "bits":   64
+    },
+    {
+      "_doc": "Method 'divide': convert hex → int, then divide by divisor.",
+      "name":    "sensor_mv",
+      "type":    "hex_to_float",
+      "source":  "raw_hex",
+      "method":  "divide",
+      "divisor": 1000.0
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: hex_to_fixedpoint  — hex string → fixed-point float",
+      "_doc3": "  result = int(hex) / 2^frac_bits",
+      "_doc4": "──────────────────────────────────────────────────────────",
+      "_doc5": "Unsigned Q8.8 (16-bit, 8 integer bits, 8 fractional bits).",
+      "name":      "gain_q8_8",
+      "type":      "hex_to_fixedpoint",
+      "source":    "raw_hex",
+      "frac_bits": 8
+    },
+    {
+      "_doc": "Signed Q1.15 (16-bit).",
+      "name":      "angle_q1_15",
+      "type":      "hex_to_fixedpoint",
+      "source":    "raw_hex",
+      "frac_bits": 15,
+      "signed":    true,
+      "bits":      16
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: bitmask  — extract bit field from an integer column",
+      "_doc3": "  result = (source & mask) >> shift",
+      "_doc4": "──────────────────────────────────────────────────────────",
+      "_doc5": "Source may be an integer column OR a hex-string column (auto-converted).",
+      "name":   "status_lower_nibble",
+      "type":   "bitmask",
+      "source": "raw_word",
+      "mask":   "0x000F",
+      "shift":  0
+    },
+    {
+      "_doc": "Extract bits 8-11 of a 16-bit word.",
+      "name":   "fault_code",
+      "type":   "bitmask",
+      "source": "raw_word",
+      "mask":   "0x0F00",
+      "shift":  8
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: lookup  — map discrete values to labels or numbers",
+      "_doc3": "──────────────────────────────────────────────────────────",
+      "_doc4": "Keys in 'map' are matched as strings (source values are cast to str).",
+      "name":   "mode_label",
+      "type":   "lookup",
+      "source": "mode_code",
+      "map": {
+        "0": "IDLE",
+        "1": "RUN",
+        "2": "FAULT",
+        "3": "CALIBRATE"
+      },
+      "default": "UNKNOWN"
+    },
+    {
+      "_doc": "Numeric lookup (map to floats for downstream math).",
+      "name":   "gain_factor",
+      "type":   "lookup",
+      "source": "mode_code",
+      "map": {
+        "0": 1.0,
+        "1": 2.5,
+        "2": 0.0
+      }
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "TYPE: scale  — linear scaling: result = source * factor + offset",
+      "_doc3": "──────────────────────────────────────────────────────────",
+      "name":   "temperature_c",
+      "type":   "scale",
+      "source": "raw_adc",
+      "factor": 0.0625,
+      "offset": -40.0
+    },
+    {
+      "_doc": "offset is optional (defaults to 0).",
+      "name":   "speed_rpm",
+      "type":   "scale",
+      "source": "raw_adc",
+      "factor": 0.1
+    },
+
+    {
+      "_doc": "──────────────────────────────────────────────────────────",
+      "_doc2": "CHAINING EXAMPLE",
+      "_doc3": "Conversions run sequentially. A later step may reference",
+      "_doc4": "a column produced by an earlier step.",
+      "_doc5": "──────────────────────────────────────────────────────────",
+      "_chain_step1_comment": "Step 1: parse hex → int",
+      "name":   "raw_int",
+      "type":   "hex_to_int",
+      "source": "raw_hex"
+    },
+    {
+      "_chain_step2_comment": "Step 2: extract bit field from the int column produced in step 1",
+      "name":   "channel_id",
+      "type":   "bitmask",
+      "source": "raw_int",
+      "mask":   "0x00FF",
+      "shift":  0
+    },
+    {
+      "_chain_step3_comment": "Step 3: scale the extracted channel value",
+      "name":   "channel_voltage",
+      "type":   "scale",
+      "source": "channel_id",
+      "factor": 0.01,
+      "offset": 0.0
+    }
+
+  ]
+}
