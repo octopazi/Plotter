@@ -9,6 +9,8 @@
 - [ ] **Project Save/Load:** Implement a system to save current project state. *Discussion: Use HDF5 (`.h5`) or Parquet for fast, space-efficient data storage, bundled with a JSON file mapping plot settings, UI states, and dataset relationships.*
 - [x] **Data Export Function:** Users can open `File → Export Dataset` to select any combination of loaded datasets via checkboxes and export them as CSV (one file per dataset) or as a single Excel workbook (each dataset on a separate, customisable sheet).
 
+- [ ] **Config 'Format Name' Consistency:** Enforce that the config's "format name" always matches the filename (without extension) on load/save. Automatically update the field to prevent ambiguity and accidental duplication. If a user renames a config file, update the "format name" accordingly when loading.
+
 ## User Experience (UX) & Polish
 - [x] **Dataset Viewer / Panel:** Added a UI panel split (QSplitter) with a QListWidget for loaded files and QTableView for data inspection.
 - [x] **Data Modification Hook:** Because `PandasTableModel` holds a direct reference to the `Dataset.df`, UI edits edit the dataframe immediately without reverse-mapping index overhead.
@@ -16,6 +18,9 @@
   - [x] **Resolved via Conversion Handler Module:** Extracted all conversion logic into `core/conversion_handlers.py` with a `HANDLER_REGISTRY` pattern. `apply_conversions()` collects all failures and returns them as structured `ConversionError` objects. `MainWindow` surfaces these as a `QMessageBox.warning` dialog listing each failed step (index, name, type, and error message) after import.
 - [ ] **Loading Indicators:** Add a progress bar or loading spinner for importing large datalog files.
 - [ ] **Enhanced Plot Toolbars:** Potential custom UI for plot saving and figure management beyond the standard Matplotlib toolbar.
+
+- [ ] **Inline Editing for Y Columns/Conversions:** Enable inline editing (double-click or context menu) for Y columns and conversion formulas in column mapping and conversion dialogs. Users can modify entries directly without deleting/re-adding.
+- [ ] **Version & Build Date Display:** Show version and build date in the main window (status bar, window title, or About dialog under Help menu).
 
 ## Plotting & Analysis
 - [x] **Multi-Y-axis Support:** Implement plotting multiple data columns on the same figure with independent Y-scales.
@@ -25,6 +30,10 @@
 - [x] **Draggable Legends:** Updated plot windows to allow legends to be moved manually by the user.
 - [ ] **Interactive Inspection:** Implement a Coordinate Picker (Crosshair) and Vertical Markers/Cursors for data measurement.
 - [ ] **Performance (Resampling):** Implement data downsampling/decimation for smooth plotting of massive datasets (e.g., 250k+ rows). *Strategy: Use LTTB (Largest Triangle Three Buckets) downsampling or simply slice standard skips for the plotting view while keeping the raw data untouched in the DataManager.*
+
+- [ ] **Column Statistics Summary:** Add statistics summary (min, max, peak-to-peak, RMS, SD) for selected column (panel or context menu in main window).
+- [ ] **Apply Formula to Column:** Allow applying custom formulas to columns from the main window (right-click or formula bar for direct calculation, similar to conversions).
+- [ ] **FFT Output Naming (Column Info):** Update FFT output dataset naming to include column name (e.g., 'filename -- FFT (column)').
 
 ## Further Discussion Needed
 - [x] **FFT Implementation Strategy:** Implemented via the `DataManager`—FFT results become a new `Dataset` linked to their parent.
