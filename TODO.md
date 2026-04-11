@@ -31,7 +31,8 @@
 - [ ] **Interactive Inspection:** Implement a Coordinate Picker (Crosshair) and Vertical Markers/Cursors for data measurement.
 - [ ] **Performance (Resampling):** Implement data downsampling/decimation for smooth plotting of massive datasets (e.g., 250k+ rows). *Strategy: Use LTTB (Largest Triangle Three Buckets) downsampling or simply slice standard skips for the plotting view while keeping the raw data untouched in the DataManager.*
 
-- [ ] **Column Statistics Summary:** Add statistics summary (min, max, peak-to-peak, RMS, SD) for selected column (panel or context menu in main window).
+- [x] **Column Statistics Summary:** Implemented for selected columns via Data Viewer header right-click context menu and `Tools → Column Statistics Summary`. Results are shown in a summary dialog with Min, Max, peak-to-peak, RMS, and SD (Population / Excel STDEV.P style), plus valid/invalid sample counts.
+- [ ] **Toggleable Statistics Panel:** Add an optional show/hide statistics panel (dock-style) for persistent, live column stats viewing without reopening dialogs.
 - [ ] **Apply Formula to Column:** Allow applying custom formulas to columns from the main window (right-click or formula bar for direct calculation, similar to conversions).
 - [ ] **FFT Output Naming (Column Info):** Update FFT output dataset naming to include column name (e.g., 'filename -- FFT (column)').
 
