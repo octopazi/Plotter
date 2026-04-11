@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from PyQt5.QtCore import QAbstractTableModel, Qt
 
 class PandasTableModel(QAbstractTableModel):
@@ -24,8 +25,11 @@ class PandasTableModel(QAbstractTableModel):
             value = self._data.iloc[index.row(), index.column()]
             if pd.isna(value):
                 return ""
-            if isinstance(value, float):
-                return f"{value:.4f}"
+            # Handle both Python floats and NumPy floating types.
+            # Convert to a native Python float and format with
+            # enough significant digits to preserve precision.
+            if isinstance(value, (float, np.floating)):
+                return format(float(value), '.17g')
             return str(value)
             
         return None
