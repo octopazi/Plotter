@@ -1,9 +1,10 @@
 import matplotlib
 matplotlib.use('Qt5Agg')
+import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
-from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
+from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLabel
 from PyQt5.QtCore import Qt
 from core.analysis import TrendlineAnalyzer
 from .plot_settings_dialog import PlotSettingsDialog
@@ -25,6 +26,17 @@ class PlotWindow(QMainWindow):
         # Support single or multiple Y-cols
         self.y_cols = y_cols if isinstance(y_cols, list) else [y_cols] 
         self.plot_type = plot_type
+
+        # Interactive inspection state
+        self.coordinate_picker_enabled = False
+        self.vertical_cursor_enabled = False
+        self._inspect_series = []
+        self._crosshair_vline = None
+        self._crosshair_hline = None
+        self._crosshair_annot = None
+        self._crosshair_axis = None
+        self._cursor_x_values = []
+        self._cursor_lines = []
         
         # Initial Plot Settings
         self.settings = {
@@ -69,12 +81,197 @@ class PlotWindow(QMainWindow):
         self.settings_btn = QPushButton("Plot Settings / Analysis")
         self.settings_btn.clicked.connect(self.open_settings_dialog)
         controls_layout.addWidget(self.settings_btn)
+
+        self.coord_picker_btn = QPushButton("Coordinate Picker")
+        self.coord_picker_btn.setCheckable(True)
+        self.coord_picker_btn.toggled.connect(self.toggle_coordinate_picker)
+        controls_layout.addWidget(self.coord_picker_btn)
+
+        self.cursor_btn = QPushButton("Vertical Cursors")
+        self.cursor_btn.setCheckable(True)
+        self.cursor_btn.toggled.connect(self.toggle_vertical_cursors)
+        controls_layout.addWidget(self.cursor_btn)
+
+        self.clear_cursor_btn = QPushButton("Clear Cursors")
+        self.clear_cursor_btn.clicked.connect(self.clear_vertical_cursors)
+        controls_layout.addWidget(self.clear_cursor_btn)
+
+        self.inspect_label = QLabel("Inspection: Off")
+        controls_layout.addWidget(self.inspect_label)
         
         controls_layout.addStretch()
         layout.addLayout(controls_layout)
         
         # Create Main Axis
         self.ax = self.fig.add_subplot(111)
+
+        # Connect matplotlib inspection events once.
+        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+        self.canvas.mpl_connect('button_press_event', self.on_mouse_click)
+
+    def toggle_coordinate_picker(self, enabled):
+        self.coordinate_picker_enabled = bool(enabled)
+        if not self.coordinate_picker_enabled:
+            self._hide_crosshair()
+        self._update_inspection_label()
+
+    def toggle_vertical_cursors(self, enabled):
+        self.vertical_cursor_enabled = bool(enabled)
+        if not self.vertical_cursor_enabled:
+            self.clear_vertical_cursors()
+        self._update_inspection_label()
+
+    def _update_inspection_label(self):
+        parts = []
+        if self.coordinate_picker_enabled:
+            parts.append("Picker")
+        if self.vertical_cursor_enabled:
+            parts.append("Cursors")
+        if not parts:
+            self.inspect_label.setText("Inspection: Off")
+            return
+
+        if len(self._cursor_x_values) == 2:
+            x1, x2 = self._cursor_x_values
+            dx = x2 - x1
+            self.inspect_label.setText(
+                f"Inspection: {' + '.join(parts)} | X1={x1:.6g}, X2={x2:.6g}, dX={dx:.6g}"
+            )
+        else:
+            self.inspect_label.setText(f"Inspection: {' + '.join(parts)}")
+
+    def _hide_crosshair(self):
+        for artist in (self._crosshair_vline, self._crosshair_hline, self._crosshair_annot):
+            if artist is not None:
+                artist.set_visible(False)
+        self.canvas.draw_idle()
+
+    def _clear_crosshair_artists(self):
+        for attr in ("_crosshair_vline", "_crosshair_hline", "_crosshair_annot"):
+            artist = getattr(self, attr)
+            if artist is not None:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+            setattr(self, attr, None)
+        self._crosshair_axis = None
+
+    def clear_vertical_cursors(self):
+        for line in self._cursor_lines:
+            try:
+                line.remove()
+            except Exception:
+                pass
+        self._cursor_lines = []
+        self._cursor_x_values = []
+        self._update_inspection_label()
+        self.canvas.draw_idle()
+
+    def _ensure_crosshair(self, axis):
+        if axis is None:
+            return False
+        if self._crosshair_axis is axis and self._crosshair_vline is not None:
+            return True
+
+        self._clear_crosshair_artists()
+        self._crosshair_axis = axis
+        self._crosshair_vline = axis.axvline(0, color='gray', linestyle='--', linewidth=0.8, alpha=0.8, zorder=90)
+        self._crosshair_hline = axis.axhline(0, color='gray', linestyle='--', linewidth=0.8, alpha=0.8, zorder=90)
+        self._crosshair_annot = axis.annotate(
+            "",
+            xy=(0, 0),
+            xytext=(10, 10),
+            textcoords='offset points',
+            bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8),
+            fontsize=9,
+            zorder=95,
+        )
+        return True
+
+    def _nearest_point(self, event):
+        if not self._inspect_series:
+            return None
+
+        best = None
+        for series in self._inspect_series:
+            x_vals = series.get('x')
+            y_vals = series.get('y')
+            axis = series.get('axis')
+            label = series.get('label')
+            if x_vals is None or y_vals is None or len(x_vals) == 0:
+                continue
+
+            pts = np.column_stack((x_vals, y_vals))
+            disp = axis.transData.transform(pts)
+            d2 = (disp[:, 0] - event.x) ** 2 + (disp[:, 1] - event.y) ** 2
+            idx = int(np.argmin(d2))
+            candidate = {
+                'distance2': float(d2[idx]),
+                'x': float(x_vals[idx]),
+                'y': float(y_vals[idx]),
+                'label': label,
+                'axis': axis,
+            }
+            if best is None or candidate['distance2'] < best['distance2']:
+                best = candidate
+
+        # Pixel threshold to avoid snapping to distant points.
+        if best is None or best['distance2'] > (20 ** 2):
+            return None
+        return best
+
+    def on_mouse_move(self, event):
+        if not self.coordinate_picker_enabled:
+            return
+        if event.inaxes not in [self.ax, getattr(self, 'ax2', None)]:
+            self._hide_crosshair()
+            return
+
+        nearest = self._nearest_point(event)
+        if nearest is None:
+            self._hide_crosshair()
+            return
+
+        axis = nearest['axis']
+        if not self._ensure_crosshair(axis):
+            return
+
+        x_val = nearest['x']
+        y_val = nearest['y']
+        label = nearest['label']
+
+        self._crosshair_vline.set_xdata([x_val, x_val])
+        self._crosshair_hline.set_ydata([y_val, y_val])
+        self._crosshair_vline.set_visible(True)
+        self._crosshair_hline.set_visible(True)
+
+        self._crosshair_annot.xy = (x_val, y_val)
+        self._crosshair_annot.set_text(f"{label}\nX={x_val:.6g}, Y={y_val:.6g}")
+        self._crosshair_annot.set_visible(True)
+
+        self.canvas.draw_idle()
+
+    def on_mouse_click(self, event):
+        if not self.vertical_cursor_enabled:
+            return
+        if event.button != 1:
+            return
+        if event.inaxes not in [self.ax, getattr(self, 'ax2', None)]:
+            return
+        if event.xdata is None:
+            return
+
+        x_val = float(event.xdata)
+        if len(self._cursor_x_values) >= 2:
+            self.clear_vertical_cursors()
+
+        line = self.ax.axvline(x_val, color='tab:purple', linestyle='--', linewidth=1.2, zorder=92)
+        self._cursor_lines.append(line)
+        self._cursor_x_values.append(x_val)
+
+        self._update_inspection_label()
+        self.canvas.draw_idle()
 
     def closeEvent(self, event):
         """Clean up references when the plot window is closed."""
@@ -102,6 +299,9 @@ class PlotWindow(QMainWindow):
 
     def draw_plot(self):
         self.ax.clear()
+        self._inspect_series = []
+        self._clear_crosshair_artists()
+        self.clear_vertical_cursors()
         # Check if secondary axis is needed
         if hasattr(self, 'ax2'):
             try:
@@ -137,9 +337,25 @@ class PlotWindow(QMainWindow):
             
             # Decide drawing style based on plot_type
             if self.plot_type == "scatter":
-                target_ax.plot(self.df[self.x_col], self.df[y_col], marker='o', linestyle='', alpha=0.7, label=f"{label_prefix}", zorder=data_z, color=color)
+                raw_line = target_ax.plot(self.df[self.x_col], self.df[y_col], marker='o', linestyle='', alpha=0.7, label=f"{label_prefix}", zorder=data_z, color=color)[0]
             elif self.plot_type == "line_scatter":
-                target_ax.plot(self.df[self.x_col], self.df[y_col], marker='', linestyle='-', alpha=0.7, label=f"{label_prefix}", zorder=data_z, color=color)
+                raw_line = target_ax.plot(self.df[self.x_col], self.df[y_col], marker='', linestyle='-', alpha=0.7, label=f"{label_prefix}", zorder=data_z, color=color)[0]
+
+            # Keep numeric copies for nearest-point inspection.
+            try:
+                x_num = np.asarray(self.df[self.x_col], dtype=float)
+                y_num = np.asarray(self.df[y_col], dtype=float)
+            except Exception:
+                continue
+            valid = np.isfinite(x_num) & np.isfinite(y_num)
+            if np.any(valid):
+                self._inspect_series.append({
+                    'x': x_num[valid],
+                    'y': y_num[valid],
+                    'label': y_col,
+                    'axis': target_ax,
+                    'line': raw_line,
+                })
                 
             # Check if Trendline is requested (only for the first Y series for now to avoid clutter)
             if self.settings.get('trend_enabled') and i == 0:
