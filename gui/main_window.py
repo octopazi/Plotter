@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 from core.config_manager import ConfigManager
+from core.column_stats import compute_column_stats
 from core.file_loader import FileLoader
 from core.data_manager import DataManager
 from core.pandas_table_model import PandasTableModel
@@ -72,6 +73,10 @@ class MainWindow(QMainWindow):
         fft_action = QAction("FFT", self)
         fft_action.triggered.connect(self.open_fft_dialog)
         tools_menu.addAction(fft_action)
+
+        stats_action = QAction("Column Statistics Summary", self)
+        stats_action.triggered.connect(lambda _checked=False: self.open_column_statistics())
+        tools_menu.addAction(stats_action)
         
         # Track active plot windows so they don't get garbage collected
         self.plot_windows = []
@@ -110,7 +115,10 @@ class MainWindow(QMainWindow):
         # Optimize view for large data sets
         self.data_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         # Enable editing of headers by double-clicking
-        self.data_table_view.horizontalHeader().setStretchLastSection(False)
+        header = self.data_table_view.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        header.customContextMenuRequested.connect(self.show_table_header_context_menu)
         right_layout.addWidget(self.data_table_view)
 
         splitter.addWidget(left_panel)
@@ -231,6 +239,102 @@ class MainWindow(QMainWindow):
         delete_action.triggered.connect(self.delete_selected_dataset)
         menu.addAction(delete_action)
         menu.exec_(self.file_list_widget.mapToGlobal(position))
+
+    def show_table_header_context_menu(self, position):
+        """Show a right-click context menu on the data table headers."""
+        if not self.data_table_view.model():
+            return
+
+        header = self.data_table_view.horizontalHeader()
+        section = header.logicalIndexAt(position)
+        if section < 0:
+            return
+
+        menu = QMenu(self)
+        stats_action = QAction("Column Statistics Summary", self)
+        stats_action.triggered.connect(lambda: self.open_column_statistics(section))
+        menu.addAction(stats_action)
+        menu.exec_(header.mapToGlobal(position))
+
+    def get_current_dataset(self):
+        """Return the currently selected dataset object from the list panel."""
+        current_item = self.file_list_widget.currentItem()
+        if not current_item:
+            return None
+        ds_id = current_item.data(Qt.UserRole)
+        if not ds_id:
+            return None
+        return self.data_manager.get_dataset(ds_id)
+
+    def open_column_statistics(self, column_index=None):
+        dataset = self.get_current_dataset()
+        if dataset is None:
+            QMessageBox.warning(self, "No Data", "Please select a dataset first.")
+            return
+
+        df = dataset.df
+        if df.empty:
+            QMessageBox.warning(self, "No Data", "Selected dataset is empty.")
+            return
+
+        # QAction.triggered emits a bool, which is not a valid table column index.
+        if isinstance(column_index, bool):
+            column_index = None
+
+        if column_index is None:
+            current_idx = self.data_table_view.currentIndex()
+            if current_idx.isValid():
+                column_index = current_idx.column()
+
+        if column_index is None:
+            numeric_cols = df.select_dtypes(include="number").columns.tolist()
+            if not numeric_cols:
+                QMessageBox.warning(self, "No Numeric Columns", "This dataset has no numeric columns.")
+                return
+
+            selected_col, ok = QInputDialog.getItem(
+                self,
+                "Column Statistics Summary",
+                "Select numeric column:",
+                numeric_cols,
+                0,
+                False,
+            )
+            if not ok:
+                return
+            column_name = selected_col
+        else:
+            try:
+                column_index = int(column_index)
+            except (TypeError, ValueError):
+                QMessageBox.warning(self, "Invalid Selection", "Selected column is invalid.")
+                return
+
+            if column_index < 0 or column_index >= len(df.columns):
+                QMessageBox.warning(self, "Invalid Selection", "Selected column is out of range.")
+                return
+            column_name = df.columns[column_index]
+
+        if column_name == "_source_file":
+            QMessageBox.warning(
+                self,
+                "Unsupported Column",
+                "Statistics are not available for '_source_file'.",
+            )
+            return
+
+        try:
+            stats = compute_column_stats(df[column_name])
+        except ValueError as e:
+            QMessageBox.warning(self, "Statistics Unavailable", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Statistics Error", f"Failed to compute statistics:\n{str(e)}")
+            return
+
+        from .column_stats_dialog import ColumnStatsDialog
+        dialog = ColumnStatsDialog(dataset.name, column_name, stats, self)
+        dialog.exec_()
 
     def delete_selected_dataset(self):
         """Delete the currently selected dataset from the DataManager and refresh the UI."""
