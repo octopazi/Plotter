@@ -18,6 +18,7 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
         
         self.data_manager = DataManager()
+        self.table_model = None
 
         # Setup Central Widget with Splitter for Data Viewer
         self.setup_central_widget()
@@ -117,6 +118,8 @@ class MainWindow(QMainWindow):
         # Enable editing of headers by double-clicking
         header = self.data_table_view.horizontalHeader()
         header.setStretchLastSection(False)
+        header.setSectionsClickable(True)
+        header.sectionDoubleClicked.connect(self.edit_header)
         header.setContextMenuPolicy(Qt.CustomContextMenu)
         header.customContextMenuRequested.connect(self.show_table_header_context_menu)
         right_layout.addWidget(self.data_table_view)
@@ -199,11 +202,6 @@ class MainWindow(QMainWindow):
             self.table_model = PandasTableModel(dataset.df)
             self.data_table_view.setModel(self.table_model)
             
-            # Enable header editing
-            header = self.data_table_view.horizontalHeader()
-            header.setSectionsClickable(True)
-            header.sectionDoubleClicked.connect(self.edit_header)
-            
             # Edits in PandasTableModel modify dataset.df directly in memory, 
             # so no manual 'sync_edited_data' index mapping is required anymore!
 
@@ -242,7 +240,7 @@ class MainWindow(QMainWindow):
 
     def show_table_header_context_menu(self, position):
         """Show a right-click context menu on the data table headers."""
-        if not self.data_table_view.model():
+        if not self.table_model:
             return
 
         header = self.data_table_view.horizontalHeader()
@@ -250,11 +248,55 @@ class MainWindow(QMainWindow):
         if section < 0:
             return
 
+        try:
+            column_name = str(self.table_model._data.columns[section])
+        except Exception:
+            return
+
         menu = QMenu(self)
         stats_action = QAction("Column Statistics Summary", self)
         stats_action.triggered.connect(lambda: self.open_column_statistics(section))
         menu.addAction(stats_action)
+
+        delete_action = QAction(f"Delete Column '{column_name}'", self)
+        delete_action.triggered.connect(lambda: self.delete_column(section))
+        menu.addAction(delete_action)
+
         menu.exec_(header.mapToGlobal(position))
+
+    def delete_column(self, section):
+        """Delete a column from the current dataset after user confirmation."""
+        if not self.table_model:
+            return
+
+        try:
+            section = int(section)
+        except (TypeError, ValueError):
+            QMessageBox.warning(self, "Invalid Selection", "Selected column is invalid.")
+            return
+
+        if section < 0 or section >= self.table_model.columnCount():
+            QMessageBox.warning(self, "Invalid Selection", "Selected column is out of range.")
+            return
+
+        column_name = str(self.table_model._data.columns[section])
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Delete column '{column_name}' from this dataset?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        if not self.table_model.delete_column(section):
+            QMessageBox.warning(self, "Delete Failed", f"Failed to delete column '{column_name}'.")
+            return
+
+        self.data_table_view.clearSelection()
+        QMessageBox.information(self, "Column Deleted", f"Column '{column_name}' was deleted.")
 
     def get_current_dataset(self):
         """Return the currently selected dataset object from the list panel."""
