@@ -45,6 +45,8 @@ class CreateImportFormatDialog(QDialog):
         # Internal storage
         self.y_columns = []
         self.conversions = []
+        self._y_editing_row = None
+        self._conv_editing_row = None
 
     # ==============================================================
     #  TAB 1 — File Format  (Header + Data settings)
@@ -137,8 +139,11 @@ class CreateImportFormatDialog(QDialog):
         self.y_index_spin = QSpinBox()
         self.y_index_spin.setRange(0, 50)
         self.y_index_spin.setToolTip("Zero-based column index in the data file.")
-        btn_add_y = QPushButton("Add Y")
-        btn_add_y.clicked.connect(self.add_y_column)
+        self.btn_add_y = QPushButton("Add Y")
+        self.btn_add_y.clicked.connect(self.add_y_column)
+        self.btn_cancel_y = QPushButton("Cancel")
+        self.btn_cancel_y.setVisible(False)
+        self.btn_cancel_y.clicked.connect(self._cancel_edit_y)
         btn_del_y = QPushButton("Delete Selected")
         btn_del_y.clicked.connect(self.delete_y_column)
 
@@ -146,11 +151,13 @@ class CreateImportFormatDialog(QDialog):
         y_add_row.addWidget(self.y_name_edit)
         y_add_row.addWidget(QLabel("Index:"))
         y_add_row.addWidget(self.y_index_spin)
-        y_add_row.addWidget(btn_add_y)
+        y_add_row.addWidget(self.btn_add_y)
+        y_add_row.addWidget(self.btn_cancel_y)
         y_add_row.addWidget(btn_del_y)
         ly.addLayout(y_add_row)
 
         self.y_list = QListWidget()
+        self.y_list.itemDoubleClicked.connect(self._start_edit_y_column)
         ly.addWidget(self.y_list)
         box_y.setLayout(ly)
         layout.addWidget(box_y)
@@ -195,19 +202,24 @@ class CreateImportFormatDialog(QDialog):
 
         # ── Buttons row ────────────────────────────────────
         btn_row = QHBoxLayout()
-        btn_add = QPushButton("Add Rule")
-        btn_add.setToolTip("Append this conversion step to the list.")
+        self.btn_add_conv = QPushButton("Add Rule")
+        self.btn_add_conv.setToolTip("Append this conversion step to the list.")
+        self.btn_cancel_conv = QPushButton("Cancel")
+        self.btn_cancel_conv.setToolTip("Exit edit mode without applying changes.")
+        self.btn_cancel_conv.setVisible(False)
         btn_del = QPushButton("Delete Selected")
         btn_del.setToolTip("Remove the selected step.")
         btn_up = QPushButton("▲ Move Up")
         btn_up.setToolTip("Move earlier (order matters for chaining).")
         btn_down = QPushButton("▼ Move Down")
         btn_down.setToolTip("Move later.")
-        btn_add.clicked.connect(self.add_conversion_rule)
+        self.btn_add_conv.clicked.connect(self.add_conversion_rule)
+        self.btn_cancel_conv.clicked.connect(self._cancel_edit_conv)
         btn_del.clicked.connect(self.delete_conversion_rule)
         btn_up.clicked.connect(self.move_conversion_up)
         btn_down.clicked.connect(self.move_conversion_down)
-        btn_row.addWidget(btn_add)
+        btn_row.addWidget(self.btn_add_conv)
+        btn_row.addWidget(self.btn_cancel_conv)
         btn_row.addWidget(btn_del)
         btn_row.addStretch()
         btn_row.addWidget(btn_up)
@@ -219,6 +231,7 @@ class CreateImportFormatDialog(QDialog):
             "⚠ Conversions run top-to-bottom. A step can reference columns from earlier steps."
         ))
         self.conv_list = QListWidget()
+        self.conv_list.itemDoubleClicked.connect(self._start_edit_conv_rule)
         layout.addWidget(self.conv_list)
 
         self.tabs.addTab(page, "Conversions")
@@ -345,19 +358,61 @@ class CreateImportFormatDialog(QDialog):
     # ==============================================================
     #  Y Column Helpers
     # ==============================================================
+    def _start_edit_y_column(self, item):
+        row = self.y_list.row(item)
+        if row < 0 or row >= len(self.y_columns):
+            return
+
+        yc = self.y_columns[row]
+        self.y_name_edit.setText(yc.get("name", ""))
+        self.y_index_spin.setValue(yc.get("index", 0))
+
+        self._y_editing_row = row
+        self.btn_add_y.setText("Update Y")
+        self.btn_cancel_y.setVisible(True)
+
+    def _cancel_edit_y(self):
+        self._y_editing_row = None
+        self.y_name_edit.clear()
+        self.btn_add_y.setText("Add Y")
+        self.btn_cancel_y.setVisible(False)
+
+    def _reset_y_form(self):
+        self._cancel_edit_y()
+
     def add_y_column(self):
         name = self.y_name_edit.text().strip()
         index = self.y_index_spin.value()
         if not name:
             QMessageBox.warning(self, "Error", "Y column name cannot be empty.")
             return
-        self.y_columns.append({"name": name, "index": index})
-        self.y_list.addItem(f"{name} (index {index})")
-        self.y_name_edit.clear()
+
+        if self._y_editing_row is None:
+            self.y_columns.append({"name": name, "index": index})
+            self.y_list.addItem(f"{name} (index {index})")
+            self.y_name_edit.clear()
+            return
+
+        row = self._y_editing_row
+        if row < 0 or row >= len(self.y_columns):
+            QMessageBox.warning(self, "Error", "Selected Y column is out of range.")
+            self._cancel_edit_y()
+            return
+
+        self.y_columns[row] = {"name": name, "index": index}
+        item = self.y_list.item(row)
+        if item is not None:
+            item.setText(f"{name} (index {index})")
+        self._reset_y_form()
 
     def delete_y_column(self):
         selected = self.y_list.currentRow()
         if selected >= 0:
+            if self._y_editing_row is not None:
+                if self._y_editing_row == selected:
+                    self._cancel_edit_y()
+                elif self._y_editing_row > selected:
+                    self._y_editing_row -= 1
             self.y_list.takeItem(selected)
             self.y_columns.pop(selected)
         else:
@@ -366,13 +421,80 @@ class CreateImportFormatDialog(QDialog):
     # ==============================================================
     #  Conversion Rule Helpers
     # ==============================================================
-    def add_conversion_rule(self):
+    def _load_conv_into_form(self, conv):
+        output_name = str(conv.get("name", ""))
+        conv_type = str(conv.get("type", "expr"))
+
+        self.conv_name.setText(output_name)
+
+        idx = self.conv_type_combo.findText(conv_type)
+        if idx < 0:
+            idx = self.conv_type_combo.findText("expr")
+        if idx >= 0:
+            self.conv_type_combo.setCurrentIndex(idx)
+
+        specs = CONV_FIELD_SPECS.get(self.conv_type_combo.currentText(), [])
+        for spec in specs:
+            key = spec["key"]
+            if key not in conv:
+                continue
+            value = conv.get(key)
+            w = self._conv_widgets.get(key)
+            if w is None:
+                continue
+
+            if key == "map" and isinstance(w, QTextEdit):
+                map_dict = value if isinstance(value, dict) else {}
+                lines = [f"{k}={v}" for k, v in map_dict.items()]
+                w.setPlainText("\n".join(lines))
+            elif isinstance(w, QLineEdit):
+                w.setText(str(value))
+            elif isinstance(w, QSpinBox):
+                try:
+                    w.setValue(int(value))
+                except Exception:
+                    pass
+            elif isinstance(w, QDoubleSpinBox):
+                try:
+                    w.setValue(float(value))
+                except Exception:
+                    pass
+            elif isinstance(w, QCheckBox):
+                w.setChecked(bool(value))
+            elif isinstance(w, QComboBox):
+                value_str = str(value)
+                w_idx = w.findText(value_str)
+                if w_idx >= 0:
+                    w.setCurrentIndex(w_idx)
+            elif isinstance(w, QTextEdit):
+                w.setPlainText(str(value))
+
+    def _start_edit_conv_rule(self, item):
+        row = self.conv_list.row(item)
+        if row < 0 or row >= len(self.conversions):
+            return
+
+        self._load_conv_into_form(self.conversions[row])
+        self._conv_editing_row = row
+        self.btn_add_conv.setText("Update Rule")
+        self.btn_cancel_conv.setVisible(True)
+
+    def _cancel_edit_conv(self):
+        self._conv_editing_row = None
+        self._reset_conv_widgets()
+        self.btn_add_conv.setText("Add Rule")
+        self.btn_cancel_conv.setVisible(False)
+
+    def _reset_conv_form(self):
+        self._cancel_edit_conv()
+
+    def _build_conversion_from_form(self):
         output_name = self.conv_name.text().strip()
         conv_type = self.conv_type_combo.currentText()
 
         if not output_name:
             QMessageBox.warning(self, "Error", "Output Name cannot be empty.")
-            return
+            return None
 
         specs = CONV_FIELD_SPECS.get(conv_type, [])
         conv = {"name": output_name, "type": conv_type}
@@ -388,7 +510,7 @@ class CreateImportFormatDialog(QDialog):
                     self, "Error",
                     f"'{spec.get('label', key)}' is required for type '{conv_type}'."
                 )
-                return
+                return None
 
             # Special handling for the lookup "map" field — parse key=value lines
             if key == "map" and conv_type == "lookup":
@@ -402,7 +524,7 @@ class CreateImportFormatDialog(QDialog):
                             self, "Error",
                             f"Invalid map line (expected 'key=value'):\n  {line}"
                         )
-                        return
+                        return None
                     k, v = line.split("=", 1)
                     map_dict[k.strip()] = v.strip()
                 conv[key] = map_dict
@@ -416,14 +538,42 @@ class CreateImportFormatDialog(QDialog):
 
             conv[key] = value
 
-        self.conversions.append(conv)
+        return conv
+
+    def add_conversion_rule(self):
+        conv = self._build_conversion_from_form()
+        if conv is None:
+            return
+
         summary = conv_summary(conv)
-        self.conv_list.addItem(f"[{len(self.conversions)}] {output_name}  ←  {summary}")
-        self._reset_conv_widgets()
+        output_name = conv.get("name", "")
+
+        if self._conv_editing_row is None:
+            self.conversions.append(conv)
+            self.conv_list.addItem(f"[{len(self.conversions)}] {output_name}  ←  {summary}")
+            self._reset_conv_widgets()
+            return
+
+        row = self._conv_editing_row
+        if row < 0 or row >= len(self.conversions):
+            QMessageBox.warning(self, "Error", "Selected conversion rule is out of range.")
+            self._cancel_edit_conv()
+            return
+
+        self.conversions[row] = conv
+        item = self.conv_list.item(row)
+        if item is not None:
+            item.setText(f"[{row + 1}] {output_name}  ←  {summary}")
+        self._reset_conv_form()
 
     def delete_conversion_rule(self):
         selected = self.conv_list.currentRow()
         if selected >= 0:
+            if self._conv_editing_row is not None:
+                if self._conv_editing_row == selected:
+                    self._cancel_edit_conv()
+                elif self._conv_editing_row > selected:
+                    self._conv_editing_row -= 1
             self.conv_list.takeItem(selected)
             self.conversions.pop(selected)
             self._refresh_conv_list_labels()

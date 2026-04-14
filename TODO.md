@@ -19,7 +19,7 @@
 - [ ] **Loading Indicators:** Add a progress bar or loading spinner for importing large datalog files.
 - [ ] **Enhanced Plot Toolbars:** Potential custom UI for plot saving and figure management beyond the standard Matplotlib toolbar.
 
-- [ ] **Inline Editing for Y Columns/Conversions:** Enable inline editing (double-click or context menu) for Y columns and conversion formulas in column mapping and conversion dialogs. Users can modify entries directly without deleting/re-adding.
+- [x] **Inline Editing for Y Columns/Conversions:** Enable inline editing (double-click or context menu) for Y columns and conversion formulas in column mapping and conversion dialogs. Users can modify entries directly without deleting/re-adding.
 - [ ] **Version & Build Date Display:** Show version and build date in the main window (status bar, window title, or About dialog under Help menu).
 
 ## Plotting & Analysis
