@@ -61,34 +61,29 @@ class FileLoader:
         conversions = config.get("conversions", [])
 
         metadata = {}
-        header_lines = header_config.get("lines", 0)
+        header_enabled = bool(header_config.get("enabled", False))
+        header_lines = int(header_config.get("lines", 0) or 0)
+        header_skip = header_lines if header_enabled else 0
 
         # 1. Parse Header Metadata
-        if header_config.get("enabled", False):
+        if header_enabled:
             metadata = extract_header_metadata(file_path, header_config)
                                 
         # 2. Parse Data block
         data_sep = data_config.get("separator", ",")
         data_ignore_prefix = data_config.get("ignore_prefix", None)
-            
-        has_col_names = header_config.get("column_names_from_header", False)
 
-        data_header_lines = data_config.get("header_lines", 0)
+        has_col_names = bool(header_config.get("column_names_from_header", False))
+        has_header_row = has_col_names and header_skip > 0
+        max_rows = int(data_config.get("total_data_lines", 0) or 0)
+        nrows = max_rows if max_rows > 0 else None
 
-        # If header row is used as DataFrame column names, keep that row for pandas header=0.
-        # There are two supported sources:
-        # 1) data.header_lines > 0  -> header row is in the data block
-        # 2) data.header_lines == 0 -> header row is the last line of the configured header area
-        if has_col_names:
-            if data_header_lines > 0:
-                skip_total = header_lines + max(data_header_lines - 1, 0)
-            elif header_lines > 0:
-                skip_total = header_lines - 1
-            else:
-                skip_total = 0
+        # If header row is enabled, treat the last header-area line as DataFrame column names.
+        if has_header_row:
+            skip_total = header_skip - 1
             header_row = 0
         else:
-            skip_total = header_lines + data_header_lines
+            skip_total = header_skip
             header_row = None
 
         # Determine if we have column names to read from the CSV
@@ -110,6 +105,7 @@ class FileLoader:
                 skiprows=skip_total,
                 comment=data_ignore_prefix,
                 header=header_row,
+                nrows=nrows,
                 engine="python",
                 skipinitialspace=True
             )
@@ -124,7 +120,7 @@ class FileLoader:
         
         # Give column standard abstract names like "col0", "col1" if no names exist in header.
         original_cols = df.columns.tolist()
-        if not has_col_names:
+        if not has_header_row:
             df.columns = [f"col{i}" for i in range(len(df.columns))]
         
         # 3. Map Standard/Domain Column Names FIRST
@@ -140,7 +136,7 @@ class FileLoader:
             # Use the data from the specified column index
             if "index" in x_def:
                 x_idx = x_def["index"]
-                c_name = f"col{x_idx}" if not has_col_names else original_cols[x_idx]
+                c_name = f"col{x_idx}" if not has_header_row else original_cols[x_idx]
                 if c_name in df.columns:
                     rename_map[c_name] = x_def.get("name", "x")
         elif x_type == "index":
@@ -154,7 +150,7 @@ class FileLoader:
             if "index" in y_def:
                 y_idx = y_def["index"]
                 y_title = y_def.get("name", f"y_{y_idx}")
-                c_name = f"col{y_idx}" if not has_col_names else original_cols[y_idx]
+                c_name = f"col{y_idx}" if not has_header_row else original_cols[y_idx]
                 if c_name in df.columns:
                     rename_map[c_name] = y_title
                     
@@ -168,7 +164,7 @@ class FileLoader:
         column_mismatch_warnings = build_config_column_mismatch_warnings(
             data_config.get("columns", {}),
             original_cols,
-            has_col_names,
+            has_header_row,
         )
                 
         return {

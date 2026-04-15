@@ -76,12 +76,8 @@ def _extract_header_area_column_names(file_path, header_config, data_config):
     if header_lines <= 0:
         return []
 
-    data_separator = _sanitize_separator(data_config.get("separator", ","), ",")
     header_separator = _sanitize_separator(header_config.get("separator", ":"), ":")
-    same_as_data = bool(header_config.get("same_as_data", False))
-    separator = data_separator if same_as_data else header_separator
-    if separator in (None, ""):
-        separator = data_separator
+    separator = header_separator
 
     ignore_prefix = _sanitize_prefix(header_config.get("ignore_prefix"))
     lines = []
@@ -142,19 +138,18 @@ def extract_header_metadata(file_path, header_config):
 
 
 def extract_column_names(file_path, header_config, data_config):
+    header_enabled = bool(header_config.get("enabled", False))
     header_lines = int(header_config.get("lines", 0) or 0)
-    data_header_lines = int(data_config.get("header_lines", 0) or 0)
+    header_skip = header_lines if header_enabled else 0
     separator = _sanitize_separator(data_config.get("separator", ","), ",")
     data_ignore_prefix = _sanitize_prefix(data_config.get("ignore_prefix"))
 
-    if data_header_lines <= 0:
-        header_area_names = _extract_header_area_column_names(file_path, header_config, data_config)
-        if header_area_names:
-            return header_area_names
+    header_area_names = _extract_header_area_column_names(file_path, header_config, data_config)
+    if header_area_names:
+        return header_area_names
 
-    # If header_lines=1, read the first row after metadata as column names.
-    # If header_lines=0, there is no explicit column-name row, so detection falls back to placeholders.
-    skip_rows = header_lines + max(data_header_lines - 1, 0)
+    # Read the first data row after the header block to estimate column count.
+    skip_rows = header_skip
 
     raw_row = pd.read_csv(
         file_path,
@@ -176,22 +171,18 @@ def extract_column_names(file_path, header_config, data_config):
         for idx, value in enumerate(raw_values)
     ]
 
-    if data_header_lines <= 0:
-        return [f"col{idx}" for idx in range(len(normalized))]
-
-    return _make_unique_names(normalized)
+    return [f"col{idx}" for idx in range(len(normalized))]
 
 
 def detect_columns_from_file(file_path, header_config, data_config):
     metadata = extract_header_metadata(file_path, header_config)
     header_area_names = _extract_header_area_column_names(file_path, header_config, data_config)
     columns = header_area_names or extract_column_names(file_path, header_config, data_config)
-    data_header_lines = int(data_config.get("header_lines", 0) or 0)
     has_header_area_names = bool(header_area_names)
     return {
         "metadata": metadata,
         "raw_columns": columns,
-        "column_names_from_header": data_header_lines > 0 or has_header_area_names,
+        "column_names_from_header": has_header_area_names,
     }
 
 

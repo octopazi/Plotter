@@ -63,9 +63,10 @@ class CreateImportFormatDialog(QDialog):
         box_header = QGroupBox("Header Settings")
         lh = QFormLayout()
 
-        self.header_enabled = QComboBox()
-        self.header_enabled.addItems(["False", "True"])
+        self.header_enabled = QCheckBox()
         self.header_enabled.setToolTip("Whether the file contains a metadata header section before the data block.")
+        self.header_enabled.setChecked(False)
+        self.header_enabled.stateChanged.connect(self._toggle_header_controls)
 
         self.header_lines = QSpinBox()
         self.header_lines.setRange(0, 50)
@@ -74,17 +75,12 @@ class CreateImportFormatDialog(QDialog):
         self.header_sep = QLineEdit(":")
         self.header_sep.setToolTip("Character separating labels from values in header lines (e.g. ':').")
 
-        self.header_same_as_data = QComboBox()
-        self.header_same_as_data.addItems(["False", "True"])
-        self.header_same_as_data.setToolTip("True if header rows use the same separator as the data block.")
-
         self.header_ignore = QLineEdit("#")
         self.header_ignore.setToolTip("Ignore header lines starting with this character/string.")
 
         lh.addRow("Header Enabled:", self.header_enabled)
-        lh.addRow("Header Lines:", self.header_lines)
+        lh.addRow("Total Header Lines:", self.header_lines)
         lh.addRow("Header Separator:", self.header_sep)
-        lh.addRow("Same-As-Data:", self.header_same_as_data)
         lh.addRow("Ignore Prefix:", self.header_ignore)
         box_header.setLayout(lh)
         layout.addWidget(box_header)
@@ -99,15 +95,19 @@ class CreateImportFormatDialog(QDialog):
         self.data_ignore = QLineEdit("//")
         self.data_ignore.setToolTip("Ignore data lines starting with this prefix.")
 
-        self.data_header_lines = QSpinBox()
-        self.data_header_lines.setRange(0, 10)
-        self.data_header_lines.setToolTip("Number of column-name rows preceding the data (usually 0 or 1).")
+        self.data_total_lines = QSpinBox()
+        self.data_total_lines.setRange(0, 1000000)
+        self.data_total_lines.setToolTip(
+            "Maximum number of data rows to import after header skip. 0 means import all rows."
+        )
 
         ld.addRow("Data Separator:", self.data_sep)
         ld.addRow("Ignore Prefix:", self.data_ignore)
-        ld.addRow("Data Header Lines:", self.data_header_lines)
+        ld.addRow("Total Data Lines:", self.data_total_lines)
         box_data.setLayout(ld)
         layout.addWidget(box_data)
+
+        self._toggle_header_controls()
 
         layout.addStretch()
         self.tabs.addTab(page, "File Format")
@@ -185,10 +185,9 @@ class CreateImportFormatDialog(QDialog):
 
     def _build_header_config(self):
         return {
-            "enabled": self.header_enabled.currentText() == "True",
+            "enabled": self.header_enabled.isChecked(),
             "lines": self.header_lines.value(),
             "separator": self.header_sep.text(),
-            "same_as_data": self.header_same_as_data.currentText() == "True",
             "ignore_prefix": self.header_ignore.text(),
             "fields": [],
         }
@@ -197,8 +196,14 @@ class CreateImportFormatDialog(QDialog):
         return {
             "separator": self.data_sep.text(),
             "ignore_prefix": self.data_ignore.text(),
-            "header_lines": self.data_header_lines.value(),
+            "total_data_lines": self.data_total_lines.value(),
         }
+
+    def _toggle_header_controls(self, _value=None):
+        enabled = self.header_enabled.isChecked()
+        self.header_lines.setEnabled(enabled)
+        self.header_sep.setEnabled(enabled)
+        self.header_ignore.setEnabled(enabled)
 
     def _on_x_mapping_changed(self, _value=None):
         # Manual X edits invalidate the previously detected source_name mapping.
@@ -813,18 +818,18 @@ class EditImportFormatDialog(CreateImportFormatDialog):
 
         # 2. Header
         h = config.get("header", {})
-        self.header_enabled.setCurrentText("True" if h.get("enabled") else "False")
+        self.header_enabled.setChecked(bool(h.get("enabled")))
         self.header_lines.setValue(h.get("lines", 0))
         self.header_sep.setText(h.get("separator", ""))
-        self.header_same_as_data.setCurrentText("True" if h.get("same_as_data") else "False")
         self.header_ignore.setText(h.get("ignore_prefix", ""))
         self.column_names_from_header = h.get("column_names_from_header", False)
+        self._toggle_header_controls()
 
         # 3. Data
         d = config.get("data", {})
         self.data_sep.setText(d.get("separator", ","))
         self.data_ignore.setText(d.get("ignore_prefix", "//"))
-        self.data_header_lines.setValue(d.get("header_lines", 0))
+        self.data_total_lines.setValue(d.get("total_data_lines", 0))
 
         # 4. Columns
         cols = d.get("columns", {})

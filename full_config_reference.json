@@ -8,7 +8,6 @@
     "enabled": true,
     "lines": 5,
     "separator": ":",
-    "same_as_data": false,
     "ignore_prefix": "#",
     "fields": [
       { "match": "Date",     "key": "date",     "type": "string" },
@@ -21,7 +20,7 @@
   "data": {
     "separator": ",",
     "ignore_prefix": "//",
-    "header_lines": 1,
+    "total_data_lines": 0,
     "columns": {
       "x": { "type": "column", "index": 0, "name": "time_ms" },
       "y": [
