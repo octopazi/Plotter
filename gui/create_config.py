@@ -4,11 +4,13 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QSpinBox, QListWidget, QGroupBox,
     QFormLayout, QMessageBox, QWidget, QDoubleSpinBox,
-    QCheckBox, QTextEdit, QTabWidget
+    QCheckBox, QTextEdit, QTabWidget, QFileDialog
 )
 from PyQt5.QtCore import Qt
 
 from core.conversion_handlers import CONV_FIELD_SPECS, conv_summary
+from core.header_detector import detect_columns_from_file
+from .column_detection_dialog import ColumnDetectionDialog
 
 
 class CreateImportFormatDialog(QDialog):
@@ -47,6 +49,8 @@ class CreateImportFormatDialog(QDialog):
         self.conversions = []
         self._y_editing_row = None
         self._conv_editing_row = None
+        self.column_names_from_header = False
+        self.x_source_name = ""
 
     # ==============================================================
     #  TAB 1 — File Format  (Header + Data settings)
@@ -115,6 +119,19 @@ class CreateImportFormatDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
 
+        detect_row = QHBoxLayout()
+        self.btn_detect_columns = QPushButton("Detect from Sample File")
+        self.btn_detect_columns.setToolTip(
+            "Import one sample datalog and auto-fill X/Y columns from detected headers."
+        )
+        self.btn_detect_columns.clicked.connect(self.detect_columns_from_sample)
+        self.detect_status = QLabel("No detection applied.")
+        self.detect_status.setStyleSheet("color: #666;")
+        detect_row.addWidget(self.btn_detect_columns)
+        detect_row.addWidget(self.detect_status)
+        detect_row.addStretch()
+        layout.addLayout(detect_row)
+
         # X mapping
         box_x = QGroupBox("X-Axis Mapping")
         lx = QFormLayout()
@@ -124,6 +141,8 @@ class CreateImportFormatDialog(QDialog):
         self.x_index = QSpinBox()
         self.x_index.setRange(0, 50)
         self.x_index.setToolTip("Zero-based column index for X (ignored if type is 'index').")
+        self.x_type.currentTextChanged.connect(self._on_x_mapping_changed)
+        self.x_index.valueChanged.connect(self._on_x_mapping_changed)
         lx.addRow("X Type:", self.x_type)
         lx.addRow("X Column Index:", self.x_index)
         box_x.setLayout(lx)
@@ -163,6 +182,99 @@ class CreateImportFormatDialog(QDialog):
         layout.addWidget(box_y)
 
         self.tabs.addTab(page, "Columns")
+
+    def _build_header_config(self):
+        return {
+            "enabled": self.header_enabled.currentText() == "True",
+            "lines": self.header_lines.value(),
+            "separator": self.header_sep.text(),
+            "same_as_data": self.header_same_as_data.currentText() == "True",
+            "ignore_prefix": self.header_ignore.text(),
+            "fields": [],
+        }
+
+    def _build_data_config(self):
+        return {
+            "separator": self.data_sep.text(),
+            "ignore_prefix": self.data_ignore.text(),
+            "header_lines": self.data_header_lines.value(),
+        }
+
+    def _on_x_mapping_changed(self, _value=None):
+        # Manual X edits invalidate the previously detected source_name mapping.
+        self.x_source_name = ""
+
+    def detect_columns_from_sample(self):
+        if self.y_columns:
+            reply = QMessageBox.question(
+                self,
+                "Replace Existing Column Mapping",
+                "Detected columns will replace your current Y-axis entries. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        sample_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Sample Datalog",
+            "",
+            "All Files (*.*);;CSV Files (*.csv);;Text Files (*.txt)",
+        )
+        if not sample_path:
+            return
+
+        header_cfg = self._build_header_config()
+        data_cfg = self._build_data_config()
+
+        try:
+            detection = detect_columns_from_file(sample_path, header_cfg, data_cfg)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Detection Failed",
+                f"Unable to detect columns from the selected sample file.\n\n{str(exc)}",
+            )
+            return
+
+        raw_columns = detection.get("raw_columns", [])
+        if not raw_columns:
+            QMessageBox.warning(
+                self,
+                "No Columns Detected",
+                "No columns were detected. Check File Format settings (header lines, separator, ignore prefix).",
+            )
+            return
+
+        preview = ColumnDetectionDialog(
+            detected_columns=raw_columns,
+            metadata=detection.get("metadata", {}),
+            parent=self,
+        )
+        if preview.exec_() != QDialog.Accepted:
+            return
+
+        result = preview.get_result()
+        x_cfg = result.get("x", {})
+        y_cfg = result.get("y", [])
+
+        if not y_cfg:
+            QMessageBox.warning(self, "No Y Columns", "Please select at least one Y-axis column.")
+            return
+
+        self.y_columns = y_cfg
+        self.y_list.clear()
+        for yc in self.y_columns:
+            self.y_list.addItem(f"{yc.get('name', '')} (index {yc.get('index', 0)})")
+
+        self.x_type.setCurrentText(x_cfg.get("type", "index"))
+        self.x_index.setValue(int(x_cfg.get("index", 0)))
+        self.x_source_name = x_cfg.get("source_name", "")
+
+        self.column_names_from_header = bool(detection.get("column_names_from_header", False))
+        self.detect_status.setText(f"Detected {len(raw_columns)} columns from sample.")
+        self.detect_status.setStyleSheet("color: #0a7a0a;")
 
     # ==============================================================
     #  TAB 3 — Conversions  (metadata-driven dynamic form)
@@ -399,7 +511,11 @@ class CreateImportFormatDialog(QDialog):
             self._cancel_edit_y()
             return
 
-        self.y_columns[row] = {"name": name, "index": index}
+        updated = {"name": name, "index": index}
+        existing = self.y_columns[row]
+        if existing.get("source_name") and existing.get("index") == index:
+            updated["source_name"] = existing.get("source_name")
+        self.y_columns[row] = updated
         item = self.y_list.item(row)
         if item is not None:
             item.setText(f"{name} (index {index})")
@@ -624,22 +740,16 @@ class CreateImportFormatDialog(QDialog):
         config = {
             "name": name,
             "header": {
-                "enabled": self.header_enabled.currentText() == "True",
-                "lines": self.header_lines.value(),
-                "separator": self.header_sep.text(),
-                "same_as_data": self.header_same_as_data.currentText() == "True",
-                "ignore_prefix": self.header_ignore.text(),
-                "fields": [],
-                "column_names_from_header": False,
+                **self._build_header_config(),
+                "column_names_from_header": self.column_names_from_header,
             },
             "data": {
-                "separator": self.data_sep.text(),
-                "ignore_prefix": self.data_ignore.text(),
-                "header_lines": self.data_header_lines.value(),
+                **self._build_data_config(),
                 "columns": {
                     "x": {
                         "type": self.x_type.currentText(),
                         "index": self.x_index.value(),
+                        "source_name": self.x_source_name,
                     },
                     "y": self.y_columns,
                 },
@@ -708,6 +818,7 @@ class EditImportFormatDialog(CreateImportFormatDialog):
         self.header_sep.setText(h.get("separator", ""))
         self.header_same_as_data.setCurrentText("True" if h.get("same_as_data") else "False")
         self.header_ignore.setText(h.get("ignore_prefix", ""))
+        self.column_names_from_header = h.get("column_names_from_header", False)
 
         # 3. Data
         d = config.get("data", {})
@@ -720,14 +831,26 @@ class EditImportFormatDialog(CreateImportFormatDialog):
         xc = cols.get("x", {})
         self.x_type.setCurrentText(xc.get("type", "column"))
         self.x_index.setValue(xc.get("index", 0))
+        self.x_source_name = xc.get("source_name", "")
 
         self.y_columns = []
         self.y_list.clear()
         for yc in cols.get("y", []):
             n = yc.get("name", "")
             i = yc.get("index", 0)
-            self.y_columns.append({"name": n, "index": i})
+            source_name = yc.get("source_name", "")
+            new_item = {"name": n, "index": i}
+            if source_name:
+                new_item["source_name"] = source_name
+            self.y_columns.append(new_item)
             self.y_list.addItem(f"{n} (index {i})")
+
+        if self.column_names_from_header:
+            self.detect_status.setText("Loaded detected-column mapping from config.")
+            self.detect_status.setStyleSheet("color: #0a7a0a;")
+        else:
+            self.detect_status.setText("No detection applied.")
+            self.detect_status.setStyleSheet("color: #666;")
 
         # 5. Conversions
         self.conversions = []

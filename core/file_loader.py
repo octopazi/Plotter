@@ -3,6 +3,10 @@ import json
 import pandas as pd
 from .config_manager import ConfigManager
 from .conversion_handlers import apply_conversions
+from .header_detector import (
+    extract_header_metadata,
+    build_config_column_mismatch_warnings,
+)
 
 class FileLoader:
     """Handles the Loading and Parsing of Data Files based on JSON Configurations."""
@@ -55,49 +59,40 @@ class FileLoader:
         header_config = config.get("header", {})
         data_config = config.get("data", {})
         conversions = config.get("conversions", [])
-        
+
         metadata = {}
         header_lines = header_config.get("lines", 0)
-        
-        # 1. Parse Header
+
+        # 1. Parse Header Metadata
         if header_config.get("enabled", False):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for i in range(header_lines):
-                    line = f.readline().strip()
-                    
-                    # Handle ignore prefix for header
-                    ignore_prefix = header_config.get("ignore_prefix")
-                    if ignore_prefix and line.startswith(ignore_prefix):
-                        line = line[len(ignore_prefix):].strip()
-                        
-                    sep = header_config.get("separator", ":")
-                    if sep in line:
-                        parts = line.split(sep, 1)
-                        key_part, val_part = parts[0].strip(), parts[1].strip()
-                        
-                        # Match fields with config mapping
-                        for field in header_config.get("fields", []):
-                            if field.get("match") == key_part:
-                                val = val_part
-                                if field.get("type") == "float":
-                                    try:
-                                        val = float(val_part)
-                                    except ValueError:
-                                        pass
-                                metadata[field.get("key")] = val
+            metadata = extract_header_metadata(file_path, header_config)
                                 
         # 2. Parse Data block
         data_sep = data_config.get("separator", ",")
         data_ignore_prefix = data_config.get("ignore_prefix", None)
             
         has_col_names = header_config.get("column_names_from_header", False)
-        
-        # We start skipping lines corresponding to the metadata block
-        # plus any additional lines specified by "header_lines" in the data object.
-        skip_total = header_lines + data_config.get("header_lines", 0)
-        
+
+        data_header_lines = data_config.get("header_lines", 0)
+
+        # If header row is used as DataFrame column names, keep that row for pandas header=0.
+        # There are two supported sources:
+        # 1) data.header_lines > 0  -> header row is in the data block
+        # 2) data.header_lines == 0 -> header row is the last line of the configured header area
+        if has_col_names:
+            if data_header_lines > 0:
+                skip_total = header_lines + max(data_header_lines - 1, 0)
+            elif header_lines > 0:
+                skip_total = header_lines - 1
+            else:
+                skip_total = 0
+            header_row = 0
+        else:
+            skip_total = header_lines + data_header_lines
+            header_row = None
+
         # Determine if we have column names to read from the CSV
-        header_row = 0 if has_col_names else None 
+        
 
         print(f"--- DEBUG LOAD PARAMS ---")
         print(f"File Path: {file_path}")
@@ -170,9 +165,15 @@ class FileLoader:
         # produced by an earlier step.  Failures are collected and returned
         # to the caller rather than silently ignored.
         conversion_errors = apply_conversions(df, conversions)
+        column_mismatch_warnings = build_config_column_mismatch_warnings(
+            data_config.get("columns", {}),
+            original_cols,
+            has_col_names,
+        )
                 
         return {
             "metadata": metadata,
             "dataframe": df,
-            "conversion_errors": conversion_errors
+            "conversion_errors": conversion_errors,
+            "column_mismatch_warnings": column_mismatch_warnings,
         }

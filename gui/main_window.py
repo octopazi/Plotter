@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
             try:
                 added_count = 0
                 all_conversion_errors = []   # (filename, ConversionError) pairs
+                all_column_warnings = []     # (filename, warning_text) pairs
                 
                 # Load each file and add to DataManager independently
                 for file_path in dialog.selected_files:
@@ -149,6 +150,8 @@ class MainWindow(QMainWindow):
                     # Collect conversion errors for this file
                     for err in result.get('conversion_errors', []):
                         all_conversion_errors.append((name, err))
+                    for warn in result.get('column_mismatch_warnings', []):
+                        all_column_warnings.append((name, warn))
                     
                     ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type="raw")
                     added_count += 1
@@ -168,6 +171,18 @@ class MainWindow(QMainWindow):
                         f"{len(all_conversion_errors)} conversion step(s) failed and were skipped.\n"
                         f"The affected output columns are absent from the dataset.\n\n"
                         + "\n\n".join(lines)
+                    )
+
+                if all_column_warnings:
+                    lines = []
+                    for filename, warn in all_column_warnings:
+                        lines.append(f"[{filename}]  {warn}")
+                    QMessageBox.warning(
+                        self,
+                        "Column Name Mismatch Warnings",
+                        "Some file columns differ from names captured during detection.\n"
+                        "Import continues, but verify X/Y mapping for correctness.\n\n"
+                        + "\n".join(lines),
                     )
                 
                 # Show summary
