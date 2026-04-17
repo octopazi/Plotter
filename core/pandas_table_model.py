@@ -88,14 +88,30 @@ class PandasTableModel(QAbstractTableModel):
                 return False
         return False
 
+    def delete_column(self, section):
+        """Delete a DataFrame column by section index."""
+        try:
+            section = int(section)
+        except (TypeError, ValueError):
+            return False
+
+        if section < 0 or section >= self.columnCount():
+            return False
+
+        try:
+            col_name = self._data.columns[section]
+            self.beginResetModel()
+            self._data.drop(columns=[col_name], inplace=True)
+            self.endResetModel()
+            return True
+        except Exception as e:
+            print(f"Error deleting column: {e}")
+            return False
+
     def flags(self, index):
         if not index.isValid():
             return Qt.NoItemFlags
-            
-        col_name = self._data.columns[index.column()]
-        if col_name == '_source_file':
-            return super().flags(index) # Read-only
-            
+
         return super().flags(index) | Qt.ItemIsEditable
 
     def setHeaderDataFlags(self, section, orientation):
