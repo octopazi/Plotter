@@ -62,6 +62,7 @@ class CreateImportFormatDialog(QDialog):
         # Header Settings
         box_header = QGroupBox("Header Settings")
         lh = QFormLayout()
+        self._header_form = lh
 
         self.header_enabled = QCheckBox()
         self.header_enabled.setToolTip("Whether the file contains a metadata header section before the data block.")
@@ -72,16 +73,61 @@ class CreateImportFormatDialog(QDialog):
         self.header_lines.setRange(0, 50)
         self.header_lines.setToolTip("Total number of rows at the top that contain metadata or non-data text.")
 
-        self.header_sep = QLineEdit(":")
-        self.header_sep.setToolTip("Character separating labels from values in header lines (e.g. ':').")
-
         self.header_ignore = QLineEdit("#")
         self.header_ignore.setToolTip("Ignore header lines starting with this character/string.")
 
         lh.addRow("Header Enabled:", self.header_enabled)
         lh.addRow("Total Header Lines:", self.header_lines)
-        lh.addRow("Header Separator:", self.header_sep)
         lh.addRow("Ignore Prefix:", self.header_ignore)
+
+        self.column_name_mode = QComboBox()
+        self.column_name_mode.addItems(["simple", "expert"])
+        self.column_name_mode.setToolTip("simple: split one header line; expert: extract names with regex.")
+        self.column_name_mode.currentTextChanged.connect(self._toggle_column_source_mode)
+
+        self.simple_select_method = QComboBox()
+        self.simple_select_method.addItems(["line_number", "marker"])
+        self.simple_select_method.setToolTip("Choose a fixed header line number or the first line containing marker text.")
+        self.simple_select_method.currentTextChanged.connect(self._toggle_simple_select_method)
+
+        self.simple_column_line_number = QSpinBox()
+        self.simple_column_line_number.setRange(1, 10000)
+        self.simple_column_line_number.setValue(1)
+        self.simple_column_line_number.setToolTip("1-based line number inside Total Header Lines.")
+
+        self.simple_marker_text = QLineEdit()
+        self.simple_marker_text.setToolTip("Find the first header line containing this text.")
+
+        self.simple_separator = QLineEdit("")
+        self.simple_separator.setToolTip("Header separator used for metadata and simple mode line split. Empty = use Data Separator.")
+
+        self.expert_line_prefix = QLineEdit("")
+        self.expert_line_prefix.setToolTip("Optional prefix filter before applying regex (e.g., %T).")
+
+        self.expert_regex = QLineEdit("")
+        self.expert_regex.setToolTip("Regex used to extract column names from header lines.")
+
+        self.expert_name_group = QSpinBox()
+        self.expert_name_group.setRange(1, 20)
+        self.expert_name_group.setValue(1)
+        self.expert_name_group.setToolTip("Required capture-group index for the column display name.")
+
+        self.expert_index_group = QSpinBox()
+        self.expert_index_group.setRange(0, 20)
+        self.expert_index_group.setValue(0)
+        self.expert_index_group.setSpecialValueText("None")
+        self.expert_index_group.setToolTip("Optional capture-group index for numeric column order. 0 = none.")
+
+        lh.addRow("Column Name Mode:", self.column_name_mode)
+        lh.addRow("Simple Select By:", self.simple_select_method)
+        lh.addRow("Simple Line Number:", self.simple_column_line_number)
+        lh.addRow("Simple Marker Text:", self.simple_marker_text)
+        lh.addRow("Simple Separator:", self.simple_separator)
+        lh.addRow("Expert Line Prefix:", self.expert_line_prefix)
+        lh.addRow("Expert Regex:", self.expert_regex)
+        lh.addRow("Expert Name Group:", self.expert_name_group)
+        lh.addRow("Expert Index Group:", self.expert_index_group)
+
         box_header.setLayout(lh)
         layout.addWidget(box_header)
 
@@ -107,6 +153,8 @@ class CreateImportFormatDialog(QDialog):
         box_data.setLayout(ld)
         layout.addWidget(box_data)
 
+        self._toggle_column_source_mode()
+        self._toggle_simple_select_method()
         self._toggle_header_controls()
 
         layout.addStretch()
@@ -184,12 +232,21 @@ class CreateImportFormatDialog(QDialog):
         self.tabs.addTab(page, "Columns")
 
     def _build_header_config(self):
+        expert_index_group = self.expert_index_group.value()
         return {
             "enabled": self.header_enabled.isChecked(),
             "lines": self.header_lines.value(),
-            "separator": self.header_sep.text(),
             "ignore_prefix": self.header_ignore.text(),
             "fields": [],
+            "column_name_mode": self.column_name_mode.currentText(),
+            "simple_select_method": self.simple_select_method.currentText(),
+            "simple_column_line_number": self.simple_column_line_number.value(),
+            "simple_marker_text": self.simple_marker_text.text(),
+            "simple_separator": self.simple_separator.text(),
+            "expert_line_prefix": self.expert_line_prefix.text(),
+            "expert_regex": self.expert_regex.text(),
+            "expert_name_group": self.expert_name_group.value(),
+            "expert_index_group": expert_index_group if expert_index_group > 0 else "",
         }
 
     def _build_data_config(self):
@@ -202,8 +259,48 @@ class CreateImportFormatDialog(QDialog):
     def _toggle_header_controls(self, _value=None):
         enabled = self.header_enabled.isChecked()
         self.header_lines.setEnabled(enabled)
-        self.header_sep.setEnabled(enabled)
         self.header_ignore.setEnabled(enabled)
+        self.column_name_mode.setEnabled(enabled)
+        self.simple_select_method.setEnabled(enabled)
+        self.simple_column_line_number.setEnabled(enabled and self.simple_select_method.currentText() == "line_number")
+        self.simple_marker_text.setEnabled(enabled and self.simple_select_method.currentText() == "marker")
+        self.simple_separator.setEnabled(enabled)
+        self.expert_line_prefix.setEnabled(enabled)
+        self.expert_regex.setEnabled(enabled)
+        self.expert_name_group.setEnabled(enabled)
+        self.expert_index_group.setEnabled(enabled)
+
+    def _set_header_row_visible(self, widget, visible):
+        label = self._header_form.labelForField(widget) if hasattr(self, "_header_form") else None
+        if label is not None:
+            label.setVisible(visible)
+        widget.setVisible(visible)
+
+    def _toggle_column_source_mode(self, _value=None):
+        is_simple = self.column_name_mode.currentText() == "simple"
+        self._set_header_row_visible(self.simple_select_method, is_simple)
+        self._set_header_row_visible(self.simple_column_line_number, is_simple)
+        self._set_header_row_visible(self.simple_marker_text, is_simple)
+        self._set_header_row_visible(self.simple_separator, is_simple)
+
+        self._set_header_row_visible(self.expert_line_prefix, not is_simple)
+        self._set_header_row_visible(self.expert_regex, not is_simple)
+        self._set_header_row_visible(self.expert_name_group, not is_simple)
+        self._set_header_row_visible(self.expert_index_group, not is_simple)
+        self._toggle_simple_select_method()
+        self._toggle_header_controls()
+
+    def _toggle_simple_select_method(self, _value=None):
+        if self.column_name_mode.currentText() != "simple":
+            self._set_header_row_visible(self.simple_column_line_number, False)
+            self._set_header_row_visible(self.simple_marker_text, False)
+            self._toggle_header_controls()
+            return
+
+        is_line_mode = self.simple_select_method.currentText() == "line_number"
+        self._set_header_row_visible(self.simple_column_line_number, is_line_mode)
+        self._set_header_row_visible(self.simple_marker_text, not is_line_mode)
+        self._toggle_header_controls()
 
     def _on_x_mapping_changed(self, _value=None):
         # Manual X edits invalidate the previously detected source_name mapping.
@@ -820,9 +917,23 @@ class EditImportFormatDialog(CreateImportFormatDialog):
         h = config.get("header", {})
         self.header_enabled.setChecked(bool(h.get("enabled")))
         self.header_lines.setValue(h.get("lines", 0))
-        self.header_sep.setText(h.get("separator", ""))
         self.header_ignore.setText(h.get("ignore_prefix", ""))
+        self.column_name_mode.setCurrentText(h.get("column_name_mode", "simple"))
+        self.simple_select_method.setCurrentText(h.get("simple_select_method", "line_number"))
+        self.simple_column_line_number.setValue(int(h.get("simple_column_line_number", 1) or 1))
+        self.simple_marker_text.setText(h.get("simple_marker_text", ""))
+        self.simple_separator.setText(h.get("simple_separator", h.get("separator", "")))
+        self.expert_line_prefix.setText(h.get("expert_line_prefix", ""))
+        self.expert_regex.setText(h.get("expert_regex", ""))
+        self.expert_name_group.setValue(int(h.get("expert_name_group", 1) or 1))
+        expert_idx = h.get("expert_index_group", "")
+        if expert_idx in (None, ""):
+            self.expert_index_group.setValue(0)
+        else:
+            self.expert_index_group.setValue(int(expert_idx))
         self.column_names_from_header = h.get("column_names_from_header", False)
+        self._toggle_column_source_mode()
+        self._toggle_simple_select_method()
         self._toggle_header_controls()
 
         # 3. Data

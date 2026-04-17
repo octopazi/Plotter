@@ -54,6 +54,9 @@ class ConfigManager:
                 # Sanitize separators
                 if "separator" in config[section]:
                     config[section]["separator"] = clean_string(config[section]["separator"])
+
+                if section == "header" and "simple_separator" in config[section]:
+                    config[section]["simple_separator"] = clean_string(config[section]["simple_separator"])
                 
                 # Sanitize ignore_prefix (convert empty string to None so Pandas isn't confused)
                 if "ignore_prefix" in config[section]:

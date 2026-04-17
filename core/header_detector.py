@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 
 
 def _coerce_field_value(raw_value, field_type):
@@ -68,41 +69,146 @@ def _make_unique_names(names):
     return final_names
 
 
-def _extract_header_area_column_names(file_path, header_config, data_config):
-    if not header_config.get("enabled", False):
+def _read_header_lines(file_path, header_config):
+    if not bool(header_config.get("enabled", False)):
         return []
 
     header_lines = int(header_config.get("lines", 0) or 0)
     if header_lines <= 0:
         return []
 
-    header_separator = _sanitize_separator(header_config.get("separator", ":"), ":")
-    separator = header_separator
-
-    ignore_prefix = _sanitize_prefix(header_config.get("ignore_prefix"))
-    lines = []
+    output = []
     with open(file_path, "r", encoding="utf-8") as file_obj:
         for _ in range(header_lines):
             line = file_obj.readline()
             if not line:
                 break
-            clean_line = _strip_prefix(line.strip(), ignore_prefix)
-            if clean_line:
-                lines.append(clean_line)
+            output.append(line.rstrip("\r\n"))
+    return output
 
+
+def _extract_simple_mode_column_names(file_path, header_config, data_config):
+    lines = _read_header_lines(file_path, header_config)
+    if not lines:
+        return [], None
+
+    method = str(header_config.get("simple_select_method", "line_number") or "line_number").strip().lower()
+    selected_idx = None
+    selected_line = None
+
+    if method == "marker":
+        marker_text = str(header_config.get("simple_marker_text", "") or "")
+        if not marker_text:
+            return [], None
+        for idx, line in enumerate(lines):
+            if marker_text in line:
+                selected_idx = idx
+                selected_line = line
+                break
+    else:
+        configured_line = int(header_config.get("simple_column_line_number", len(lines)) or len(lines))
+        if configured_line < 1 or configured_line > len(lines):
+            return [], None
+        selected_idx = configured_line - 1
+        selected_line = lines[selected_idx]
+
+    if selected_line is None:
+        return [], None
+
+    default_sep = _sanitize_separator(data_config.get("separator", ","), ",")
+    simple_sep = _sanitize_separator(header_config.get("simple_separator", ""), default_sep)
+    if simple_sep in (None, ""):
+        simple_sep = default_sep
+
+    pieces = [piece.strip() for piece in str(selected_line).split(simple_sep)]
+    pieces = [piece for piece in pieces if piece != ""]
+    if len(pieces) <= 1:
+        return [], selected_idx
+
+    normalized = [_normalize_column_name(value, f"col{idx}") for idx, value in enumerate(pieces)]
+    return _make_unique_names(normalized), selected_idx
+
+
+def _extract_expert_mode_column_names(file_path, header_config):
+    lines = _read_header_lines(file_path, header_config)
     if not lines:
         return []
 
-    candidate = lines[-1]
-    pieces = [part.strip() for part in str(candidate).split(separator)]
-    if len(pieces) <= 1:
+    pattern_text = str(header_config.get("expert_regex", "") or "").strip()
+    if not pattern_text:
         return []
 
-    normalized = [
-        _normalize_column_name(value, f"col{idx}")
-        for idx, value in enumerate(pieces)
-    ]
+    try:
+        pattern = re.compile(pattern_text)
+    except re.error as exc:
+        raise ValueError(f"Expert regex is invalid: {exc}")
+
+    name_group = int(header_config.get("expert_name_group", 1) or 1)
+    index_group_raw = header_config.get("expert_index_group", "")
+    index_group = None
+    if index_group_raw not in (None, ""):
+        index_group = int(index_group_raw)
+
+    prefix = str(header_config.get("expert_line_prefix", "") or "")
+
+    matched = []
+    seq = 0
+    for line in lines:
+        candidate = line.strip()
+        if prefix and not candidate.startswith(prefix):
+            continue
+
+        found = pattern.search(candidate)
+        if not found:
+            continue
+
+        try:
+            name = str(found.group(name_group)).strip()
+        except IndexError:
+            raise ValueError(
+                f"expert_name_group={name_group} does not exist in the regex capture groups."
+            )
+
+        if not name:
+            continue
+
+        idx_value = None
+        if index_group is not None:
+            try:
+                idx_text = found.group(index_group)
+            except IndexError:
+                raise ValueError(
+                    f"expert_index_group={index_group} does not exist in the regex capture groups."
+                )
+            if idx_text is not None and str(idx_text).strip() != "":
+                try:
+                    idx_value = int(str(idx_text).strip())
+                except ValueError:
+                    idx_value = None
+
+        matched.append((idx_value if idx_value is not None else seq, seq, name))
+        seq += 1
+
+    if not matched:
+        return []
+
+    matched.sort(key=lambda item: (item[0], item[1]))
+    ordered_names = [name for _idx, _seq, name in matched]
+    normalized = [_normalize_column_name(value, f"col{idx}") for idx, value in enumerate(ordered_names)]
     return _make_unique_names(normalized)
+
+
+def _extract_configured_column_names(file_path, header_config, data_config):
+    mode = str(header_config.get("column_name_mode", "simple") or "simple").strip().lower()
+    lines = _read_header_lines(file_path, header_config)
+
+    if mode == "expert":
+        names = _extract_expert_mode_column_names(file_path, header_config)
+        return names, False
+
+    names, selected_idx = _extract_simple_mode_column_names(file_path, header_config, data_config)
+    can_use_header_row = bool(names) and selected_idx is not None and lines and selected_idx == (len(lines) - 1)
+    return names, can_use_header_row
 
 
 def extract_header_metadata(file_path, header_config):
@@ -111,7 +217,10 @@ def extract_header_metadata(file_path, header_config):
         return metadata
 
     header_lines = int(header_config.get("lines", 0) or 0)
-    separator = _sanitize_separator(header_config.get("separator", ":"), ":")
+    separator = _sanitize_separator(
+        header_config.get("simple_separator", header_config.get("separator", ":")),
+        ":",
+    )
     ignore_prefix = _sanitize_prefix(header_config.get("ignore_prefix"))
     field_map = header_config.get("fields", []) or []
 
@@ -144,9 +253,11 @@ def extract_column_names(file_path, header_config, data_config):
     separator = _sanitize_separator(data_config.get("separator", ","), ",")
     data_ignore_prefix = _sanitize_prefix(data_config.get("ignore_prefix"))
 
-    header_area_names = _extract_header_area_column_names(file_path, header_config, data_config)
-    if header_area_names:
-        return header_area_names
+    configured_names, _can_use_header_row = _extract_configured_column_names(
+        file_path, header_config, data_config
+    )
+    if configured_names:
+        return configured_names
 
     # Read the first data row after the header block to estimate column count.
     skip_rows = header_skip
@@ -176,13 +287,14 @@ def extract_column_names(file_path, header_config, data_config):
 
 def detect_columns_from_file(file_path, header_config, data_config):
     metadata = extract_header_metadata(file_path, header_config)
-    header_area_names = _extract_header_area_column_names(file_path, header_config, data_config)
-    columns = header_area_names or extract_column_names(file_path, header_config, data_config)
-    has_header_area_names = bool(header_area_names)
+    configured_names, can_use_header_row = _extract_configured_column_names(
+        file_path, header_config, data_config
+    )
+    columns = configured_names or extract_column_names(file_path, header_config, data_config)
     return {
         "metadata": metadata,
         "raw_columns": columns,
-        "column_names_from_header": has_header_area_names,
+        "column_names_from_header": can_use_header_row,
     }
 
 
