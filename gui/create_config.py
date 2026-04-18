@@ -37,16 +37,23 @@ class CreateImportFormatDialog(QDialog):
         self._build_tab_columns()
         self._build_tab_conversions()
 
-        # ── Save Button ────────────────────────────────────
+        # ── Save / Close Buttons ───────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
         save_btn = QPushButton("Save")
+        close_btn = QPushButton("Close")
         save_btn.clicked.connect(self.save_config)
-        root_layout.addWidget(save_btn)
+        close_btn.clicked.connect(self.close)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(close_btn)
+        root_layout.addLayout(btn_row)
 
         # Internal storage
         self.y_columns = []
         self.conversions = []
         self._y_editing_row = None
         self._conv_editing_row = None
+        self._saved_state = self._collect_config_state()
 
     # ==============================================================
     #  TAB 1 — File Format  (Header + Data settings)
@@ -612,17 +619,10 @@ class CreateImportFormatDialog(QDialog):
                 text = text[text.index("]") + 1:].lstrip()
             item.setText(f"[{i + 1}] {text}")
 
-    # ==============================================================
-    #  Save
-    # ==============================================================
-    def save_config(self):
-        name = self.name_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Error", "Format Name cannot be empty.")
-            return
-
-        config = {
-            "name": name,
+    def _collect_config_state(self):
+        """Build a normalized state payload for save and dirty-state checks."""
+        return {
+            "name": self.name_edit.text().strip(),
             "header": {
                 "enabled": self.header_enabled.currentText() == "True",
                 "lines": self.header_lines.value(),
@@ -641,11 +641,45 @@ class CreateImportFormatDialog(QDialog):
                         "type": self.x_type.currentText(),
                         "index": self.x_index.value(),
                     },
-                    "y": self.y_columns,
+                    "y": list(self.y_columns),
                 },
             },
-            "conversions": self.conversions,
+            "conversions": list(self.conversions),
         }
+
+    def _mark_saved(self):
+        self._saved_state = self._collect_config_state()
+
+    def _has_unsaved_changes(self):
+        return self._collect_config_state() != self._saved_state
+
+    def closeEvent(self, event):
+        if not self._has_unsaved_changes():
+            event.accept()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Close without saving?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
+
+    # ==============================================================
+    #  Save
+    # ==============================================================
+    def save_config(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Error", "Format Name cannot be empty.")
+            return
+
+        config = self._collect_config_state()
 
         config_dir = os.path.join(os.getcwd(), "Config")
         os.makedirs(config_dir, exist_ok=True)
@@ -656,7 +690,6 @@ class CreateImportFormatDialog(QDialog):
             current_path is not None
             and os.path.abspath(current_path) == os.path.abspath(save_path)
         )
-
         if os.path.exists(save_path) and not is_same_file:
             reply = QMessageBox.question(
                 self,
@@ -671,8 +704,9 @@ class CreateImportFormatDialog(QDialog):
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
 
+        self.config_path = save_path
+        self._mark_saved()
         QMessageBox.information(self, "Saved", f"Saved to: {save_path}")
-        self.accept()
 
 
 # ==================================================================
@@ -738,6 +772,8 @@ class EditImportFormatDialog(CreateImportFormatDialog):
             self.conv_list.addItem(
                 f"[{step_idx}] {c.get('name', '')}  ←  {summary}"
             )
+
+        self._mark_saved()
 
     def save_config(self):
         new_name = self.name_edit.text().strip()
