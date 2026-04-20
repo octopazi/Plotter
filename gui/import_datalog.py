@@ -3,9 +3,13 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
     QLineEdit, QPushButton, QFileDialog, QMessageBox, QListWidget, QAbstractItemView
 )
+from core.app_settings import AppSettings
 from core.config_manager import ConfigManager
 
 class ImportDatalogDialog(QDialog):
+    LAST_CONFIG_KEY = "import_datalog/last_config"
+    LAST_DIRECTORY_KEY = "import_datalog/last_directory"
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Import Datalog")
@@ -62,15 +66,18 @@ class ImportDatalogDialog(QDialog):
         configs = ConfigManager.get_available_configs()
         if configs:
             self.config_combo.addItems(configs)
+            AppSettings.restore_combo_selection(self.config_combo, self.LAST_CONFIG_KEY)
         else:
             self.config_combo.addItem("No configs found")
             self.config_combo.setEnabled(False)
             
     def browse_files(self):
+        start_directory = AppSettings.get_directory(self.LAST_DIRECTORY_KEY, os.getcwd())
         file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "Select Datalog Files", "", "All Files (*.*);;CSV Files (*.csv);;Text Files (*.txt)"
+            self, "Select Datalog Files", start_directory, "All Files (*.*);;CSV Files (*.csv);;Text Files (*.txt)"
         )
         if file_paths:
+            AppSettings.remember_directory_from_paths(self.LAST_DIRECTORY_KEY, file_paths)
             for path in file_paths:
                 # Avoid adding duplicates
                 items = [self.file_list_widget.item(i).text() for i in range(self.file_list_widget.count())]
@@ -98,4 +105,5 @@ class ImportDatalogDialog(QDialog):
             
         self.selected_config = config
         self.selected_files = [self.file_list_widget.item(i).text() for i in range(file_count)]
+        AppSettings.save_combo_selection(self.config_combo, self.LAST_CONFIG_KEY)
         self.accept()
