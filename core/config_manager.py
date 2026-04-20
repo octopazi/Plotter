@@ -63,6 +63,40 @@ class ConfigManager:
                     else:
                         config[section]["ignore_prefix"] = clean_string(prefix)
 
+        # Optional section: plot auto-generation defaults
+        plot_cfg = config.get("plot_config")
+        if not isinstance(plot_cfg, dict):
+            config["plot_config"] = {"enabled": False, "figures": []}
+        else:
+            figures = plot_cfg.get("figures", [])
+            if not isinstance(figures, list):
+                figures = []
+
+            clean_figures = []
+            for fig in figures:
+                if not isinstance(fig, dict):
+                    continue
+
+                y_cols = fig.get("y_columns", [])
+                if isinstance(y_cols, str):
+                    y_cols = [c.strip() for c in y_cols.split(",") if c.strip()]
+                elif isinstance(y_cols, list):
+                    y_cols = [str(c).strip() for c in y_cols if str(c).strip()]
+                else:
+                    y_cols = []
+
+                clean_figures.append({
+                    "title": str(fig.get("title", "")).strip(),
+                    "plot_type": str(fig.get("plot_type", "scatter")).strip() or "scatter",
+                    "x_column": str(fig.get("x_column", "")).strip(),
+                    "y_columns": y_cols,
+                })
+
+            config["plot_config"] = {
+                "enabled": bool(plot_cfg.get("enabled", False)),
+                "figures": clean_figures,
+            }
+
         return config
 
     @staticmethod
@@ -73,6 +107,26 @@ class ConfigManager:
         for key in required_keys:
             if key not in config_data:
                 return False, f"Missing required key: '{key}'"
+
+        # Optional validation for plot_config.
+        if "plot_config" in config_data:
+            plot_cfg = config_data.get("plot_config")
+            if not isinstance(plot_cfg, dict):
+                return False, "Invalid 'plot_config': expected object."
+
+            if "enabled" in plot_cfg and not isinstance(plot_cfg.get("enabled"), bool):
+                return False, "Invalid 'plot_config.enabled': expected boolean."
+
+            figures = plot_cfg.get("figures", [])
+            if not isinstance(figures, list):
+                return False, "Invalid 'plot_config.figures': expected array."
+
+            for idx, fig in enumerate(figures, start=1):
+                if not isinstance(fig, dict):
+                    return False, f"Invalid figure #{idx}: expected object."
+
+                if "y_columns" in fig and not isinstance(fig.get("y_columns"), list):
+                    return False, f"Invalid figure #{idx} 'y_columns': expected array."
         
         # We can add more specific type/schema checks here later
         return True, "Valid configuration."

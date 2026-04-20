@@ -33,6 +33,25 @@
     }
   },
 
+  "plot_config": {
+    "_doc": "Optional auto-plot section. If enabled, each imported file will generate the configured figures.",
+    "enabled": true,
+    "figures": [
+      {
+        "title": "Primary Signals",
+        "plot_type": "scatter",
+        "x_column": "time_ms",
+        "y_columns": ["raw_adc", "voltage"]
+      },
+      {
+        "title": "Status Overview",
+        "plot_type": "line_scatter",
+        "x_column": "time_ms",
+        "y_columns": ["fault_code"]
+      }
+    ]
+  },
+
   "conversions": [
 
     {
