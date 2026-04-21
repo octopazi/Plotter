@@ -7,9 +7,16 @@
   "header": {
     "enabled": true,
     "lines": 5,
-    "separator": ":",
-    "same_as_data": false,
     "ignore_prefix": "#",
+    "column_name_mode": "simple",
+    "simple_select_method": "line_number",
+    "simple_column_line_number": 5,
+    "simple_marker_text": "",
+    "simple_separator": ",",
+    "expert_line_prefix": "%T",
+    "expert_regex": "^%T(\\d+):\\s*([^\\(]+)",
+    "expert_name_group": 2,
+    "expert_index_group": 1,
     "fields": [
       { "match": "Date",     "key": "date",     "type": "string" },
       { "match": "Version",  "key": "version",  "type": "string" },
@@ -21,7 +28,7 @@
   "data": {
     "separator": ",",
     "ignore_prefix": "//",
-    "header_lines": 1,
+    "total_data_lines": 0,
     "columns": {
       "x": { "type": "column", "index": 0, "name": "time_ms" },
       "y": [

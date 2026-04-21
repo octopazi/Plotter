@@ -4,11 +4,14 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QComboBox, QPushButton, QSpinBox, QListWidget, QGroupBox,
     QFormLayout, QMessageBox, QWidget, QDoubleSpinBox,
-    QCheckBox, QTextEdit, QTabWidget
+    QCheckBox, QTextEdit, QTabWidget, QFileDialog,
+    QRadioButton, QButtonGroup, QStackedWidget
 )
 from PyQt5.QtCore import Qt
 
 from core.conversion_handlers import CONV_FIELD_SPECS, conv_summary
+from core.header_detector import detect_columns_from_file
+from .column_detection_dialog import ColumnDetectionDialog
 
 
 class CreateImportFormatDialog(QDialog):
@@ -55,6 +58,8 @@ class CreateImportFormatDialog(QDialog):
         self.plot_figures = []
         self._y_editing_row = None
         self._conv_editing_row = None
+        self.column_names_from_header = False
+        self.x_source_name = ""
         self._plot_editing_row = None
         self._saved_state = self._collect_config_state()
 
@@ -69,29 +74,98 @@ class CreateImportFormatDialog(QDialog):
         box_header = QGroupBox("Header Settings")
         lh = QFormLayout()
 
-        self.header_enabled = QComboBox()
-        self.header_enabled.addItems(["False", "True"])
+        self.header_enabled = QCheckBox()
         self.header_enabled.setToolTip("Whether the file contains a metadata header section before the data block.")
+        self.header_enabled.setChecked(False)
+        self.header_enabled.stateChanged.connect(self._toggle_header_controls)
 
         self.header_lines = QSpinBox()
         self.header_lines.setRange(0, 50)
         self.header_lines.setToolTip("Total number of rows at the top that contain metadata or non-data text.")
 
-        self.header_sep = QLineEdit(":")
-        self.header_sep.setToolTip("Character separating labels from values in header lines (e.g. ':').")
-
-        self.header_same_as_data = QComboBox()
-        self.header_same_as_data.addItems(["False", "True"])
-        self.header_same_as_data.setToolTip("True if header rows use the same separator as the data block.")
-
         self.header_ignore = QLineEdit("#")
         self.header_ignore.setToolTip("Ignore header lines starting with this character/string.")
 
         lh.addRow("Header Enabled:", self.header_enabled)
-        lh.addRow("Header Lines:", self.header_lines)
-        lh.addRow("Header Separator:", self.header_sep)
-        lh.addRow("Same-As-Data:", self.header_same_as_data)
+        lh.addRow("Total Header Lines:", self.header_lines)
         lh.addRow("Ignore Prefix:", self.header_ignore)
+
+        self.column_mode_group = QButtonGroup(self)
+        self.column_mode_simple = QRadioButton("simple")
+        self.column_mode_expert = QRadioButton("expert")
+        self.column_mode_simple.setChecked(True)
+        self.column_mode_simple.setToolTip("simple: split one header line.")
+        self.column_mode_expert.setToolTip("expert: extract names with regex.")
+        self.column_mode_group.addButton(self.column_mode_simple)
+        self.column_mode_group.addButton(self.column_mode_expert)
+        self.column_mode_simple.toggled.connect(self._toggle_column_source_mode)
+        self.column_mode_expert.toggled.connect(self._toggle_column_source_mode)
+
+        mode_widget = QWidget()
+        mode_layout = QHBoxLayout(mode_widget)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.addWidget(self.column_mode_simple)
+        mode_layout.addWidget(self.column_mode_expert)
+        mode_layout.addStretch()
+
+        self.simple_select_method = QComboBox()
+        self.simple_select_method.addItems(["line_number", "marker"])
+        self.simple_select_method.setToolTip("Choose a fixed header line number or the first line containing marker text.")
+        self.simple_select_method.currentTextChanged.connect(self._toggle_simple_select_method)
+
+        self.simple_column_line_number = QSpinBox()
+        self.simple_column_line_number.setRange(1, 10000)
+        self.simple_column_line_number.setValue(1)
+        self.simple_column_line_number.setToolTip("1-based line number inside Total Header Lines.")
+
+        self.simple_marker_text = QLineEdit()
+        self.simple_marker_text.setToolTip("Find the first header line containing this text.")
+
+        self.simple_separator = QLineEdit("")
+        self.simple_separator.setToolTip("Header separator used for metadata and simple mode line split. Empty = use Data Separator.")
+
+        self.expert_line_prefix = QLineEdit("")
+        self.expert_line_prefix.setToolTip("Optional prefix filter before applying regex (e.g., %T).")
+
+        self.expert_regex = QLineEdit("")
+        self.expert_regex.setToolTip("Regex used to extract column names from header lines.")
+
+        self.expert_name_group = QSpinBox()
+        self.expert_name_group.setRange(1, 20)
+        self.expert_name_group.setValue(1)
+        self.expert_name_group.setToolTip("Required capture-group index for the column display name.")
+
+        self.expert_index_group = QSpinBox()
+        self.expert_index_group.setRange(0, 20)
+        self.expert_index_group.setValue(0)
+        self.expert_index_group.setSpecialValueText("None")
+        self.expert_index_group.setToolTip("Optional capture-group index for numeric column order. 0 = none.")
+
+        self._simple_mode_form = QFormLayout()
+        self._simple_mode_form.setContentsMargins(0, 0, 0, 0)
+        self._simple_mode_form.addRow("Header Select By:", self.simple_select_method)
+        self._simple_mode_form.addRow("Header Line Number:", self.simple_column_line_number)
+        self._simple_mode_form.addRow("Header Marker Text:", self.simple_marker_text)
+        self._simple_mode_form.addRow("Header Separator:", self.simple_separator)
+        self._simple_mode_widget = QWidget()
+        self._simple_mode_widget.setLayout(self._simple_mode_form)
+
+        self._expert_mode_form = QFormLayout()
+        self._expert_mode_form.setContentsMargins(0, 0, 0, 0)
+        self._expert_mode_form.addRow("Header Line Prefix:", self.expert_line_prefix)
+        self._expert_mode_form.addRow("Header Regex:", self.expert_regex)
+        self._expert_mode_form.addRow("Header Name Group:", self.expert_name_group)
+        self._expert_mode_form.addRow("Header Index Group:", self.expert_index_group)
+        self._expert_mode_widget = QWidget()
+        self._expert_mode_widget.setLayout(self._expert_mode_form)
+
+        self._mode_stack = QStackedWidget()
+        self._mode_stack.addWidget(self._simple_mode_widget)
+        self._mode_stack.addWidget(self._expert_mode_widget)
+
+        lh.addRow("Column Name Mode:", mode_widget)
+        lh.addRow("", self._mode_stack)
+
         box_header.setLayout(lh)
         layout.addWidget(box_header)
 
@@ -105,15 +179,21 @@ class CreateImportFormatDialog(QDialog):
         self.data_ignore = QLineEdit("//")
         self.data_ignore.setToolTip("Ignore data lines starting with this prefix.")
 
-        self.data_header_lines = QSpinBox()
-        self.data_header_lines.setRange(0, 10)
-        self.data_header_lines.setToolTip("Number of column-name rows preceding the data (usually 0 or 1).")
+        self.data_total_lines = QSpinBox()
+        self.data_total_lines.setRange(0, 1000000)
+        self.data_total_lines.setToolTip(
+            "Maximum number of data rows to import after header skip. 0 means import all rows."
+        )
 
         ld.addRow("Data Separator:", self.data_sep)
         ld.addRow("Ignore Prefix:", self.data_ignore)
-        ld.addRow("Data Header Lines:", self.data_header_lines)
+        ld.addRow("Total Data Lines:", self.data_total_lines)
         box_data.setLayout(ld)
         layout.addWidget(box_data)
+
+        self._toggle_column_source_mode()
+        self._toggle_simple_select_method()
+        self._toggle_header_controls()
 
         layout.addStretch()
         self.tabs.addTab(page, "File Format")
@@ -125,6 +205,19 @@ class CreateImportFormatDialog(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
 
+        detect_row = QHBoxLayout()
+        self.btn_detect_columns = QPushButton("Detect from Sample File")
+        self.btn_detect_columns.setToolTip(
+            "Import one sample datalog and auto-fill X/Y columns from detected headers."
+        )
+        self.btn_detect_columns.clicked.connect(self.detect_columns_from_sample)
+        self.detect_status = QLabel("No detection applied.")
+        self.detect_status.setStyleSheet("color: #666;")
+        detect_row.addWidget(self.btn_detect_columns)
+        detect_row.addWidget(self.detect_status)
+        detect_row.addStretch()
+        layout.addLayout(detect_row)
+
         # X mapping
         box_x = QGroupBox("X-Axis Mapping")
         lx = QFormLayout()
@@ -134,6 +227,8 @@ class CreateImportFormatDialog(QDialog):
         self.x_index = QSpinBox()
         self.x_index.setRange(0, 50)
         self.x_index.setToolTip("Zero-based column index for X (ignored if type is 'index').")
+        self.x_type.currentTextChanged.connect(self._on_x_mapping_changed)
+        self.x_index.valueChanged.connect(self._on_x_mapping_changed)
         lx.addRow("X Type:", self.x_type)
         lx.addRow("X Column Index:", self.x_index)
         box_x.setLayout(lx)
@@ -173,6 +268,158 @@ class CreateImportFormatDialog(QDialog):
         layout.addWidget(box_y)
 
         self.tabs.addTab(page, "Columns")
+
+    def _build_header_config(self):
+        expert_index_group = self.expert_index_group.value()
+        return {
+            "enabled": self.header_enabled.isChecked(),
+            "lines": self.header_lines.value(),
+            "ignore_prefix": self.header_ignore.text(),
+            "fields": [],
+            "column_name_mode": self._current_column_name_mode(),
+            "simple_select_method": self.simple_select_method.currentText(),
+            "simple_column_line_number": self.simple_column_line_number.value(),
+            "simple_marker_text": self.simple_marker_text.text(),
+            "simple_separator": self.simple_separator.text(),
+            "expert_line_prefix": self.expert_line_prefix.text(),
+            "expert_regex": self.expert_regex.text(),
+            "expert_name_group": self.expert_name_group.value(),
+            "expert_index_group": expert_index_group if expert_index_group > 0 else "",
+        }
+
+    def _build_data_config(self):
+        return {
+            "separator": self.data_sep.text(),
+            "ignore_prefix": self.data_ignore.text(),
+            "total_data_lines": self.data_total_lines.value(),
+        }
+
+    def _toggle_header_controls(self, _value=None):
+        enabled = self.header_enabled.isChecked()
+        is_simple = self._current_column_name_mode() == "simple"
+        self.header_lines.setEnabled(enabled)
+        self.header_ignore.setEnabled(enabled)
+        self.column_mode_simple.setEnabled(enabled)
+        self.column_mode_expert.setEnabled(enabled)
+        self._mode_stack.setEnabled(enabled)
+        self.simple_select_method.setEnabled(enabled and is_simple)
+        self.simple_column_line_number.setEnabled(
+            enabled and is_simple and self.simple_select_method.currentText() == "line_number"
+        )
+        self.simple_marker_text.setEnabled(
+            enabled and is_simple and self.simple_select_method.currentText() == "marker"
+        )
+        self.simple_separator.setEnabled(enabled and is_simple)
+        self.expert_line_prefix.setEnabled(enabled and not is_simple)
+        self.expert_regex.setEnabled(enabled and not is_simple)
+        self.expert_name_group.setEnabled(enabled and not is_simple)
+        self.expert_index_group.setEnabled(enabled and not is_simple)
+
+    def _set_form_row_visible(self, form_layout, widget, visible):
+        label = form_layout.labelForField(widget) if form_layout is not None else None
+        if label is not None:
+            label.setVisible(visible)
+        widget.setVisible(visible)
+
+    def _current_column_name_mode(self):
+        if self.column_mode_expert.isChecked():
+            return "expert"
+        return "simple"
+
+    def _toggle_column_source_mode(self, _value=None):
+        is_simple = self._current_column_name_mode() == "simple"
+        if is_simple:
+            self._mode_stack.setCurrentWidget(self._simple_mode_widget)
+        else:
+            self._mode_stack.setCurrentWidget(self._expert_mode_widget)
+        self._toggle_simple_select_method()
+        self._toggle_header_controls()
+
+    def _toggle_simple_select_method(self, _value=None):
+        if self._current_column_name_mode() != "simple":
+            self._toggle_header_controls()
+            return
+
+        is_line_mode = self.simple_select_method.currentText() == "line_number"
+        self._set_form_row_visible(self._simple_mode_form, self.simple_column_line_number, is_line_mode)
+        self._set_form_row_visible(self._simple_mode_form, self.simple_marker_text, not is_line_mode)
+        self._toggle_header_controls()
+
+    def _on_x_mapping_changed(self, _value=None):
+        # Manual X edits invalidate the previously detected source_name mapping.
+        self.x_source_name = ""
+
+    def detect_columns_from_sample(self):
+        if self.y_columns:
+            reply = QMessageBox.question(
+                self,
+                "Replace Existing Column Mapping",
+                "Detected columns will replace your current Y-axis entries. Continue?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        sample_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Sample Datalog",
+            "",
+            "All Files (*.*);;CSV Files (*.csv);;Text Files (*.txt)",
+        )
+        if not sample_path:
+            return
+
+        header_cfg = self._build_header_config()
+        data_cfg = self._build_data_config()
+
+        try:
+            detection = detect_columns_from_file(sample_path, header_cfg, data_cfg)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Detection Failed",
+                f"Unable to detect columns from the selected sample file.\n\n{str(exc)}",
+            )
+            return
+
+        raw_columns = detection.get("raw_columns", [])
+        if not raw_columns:
+            QMessageBox.warning(
+                self,
+                "No Columns Detected",
+                "No columns were detected. Check File Format settings (header lines, separator, ignore prefix).",
+            )
+            return
+
+        preview = ColumnDetectionDialog(
+            detected_columns=raw_columns,
+            metadata=detection.get("metadata", {}),
+            parent=self,
+        )
+        if preview.exec_() != QDialog.Accepted:
+            return
+
+        result = preview.get_result()
+        x_cfg = result.get("x", {})
+        y_cfg = result.get("y", [])
+
+        if not y_cfg:
+            QMessageBox.warning(self, "No Y Columns", "Please select at least one Y-axis column.")
+            return
+
+        self.y_columns = y_cfg
+        self.y_list.clear()
+        for yc in self.y_columns:
+            self.y_list.addItem(f"{yc.get('name', '')} (index {yc.get('index', 0)})")
+
+        self.x_type.setCurrentText(x_cfg.get("type", "index"))
+        self.x_index.setValue(int(x_cfg.get("index", 0)))
+        self.x_source_name = x_cfg.get("source_name", "")
+
+        self.column_names_from_header = bool(detection.get("column_names_from_header", False))
+        self.detect_status.setText(f"Detected {len(raw_columns)} columns from sample.")
+        self.detect_status.setStyleSheet("color: #0a7a0a;")
 
     # ==============================================================
     #  TAB 3 — Conversions  (metadata-driven dynamic form)
@@ -475,7 +722,11 @@ class CreateImportFormatDialog(QDialog):
             self._cancel_edit_y()
             return
 
-        self.y_columns[row] = {"name": name, "index": index}
+        updated = {"name": name, "index": index}
+        existing = self.y_columns[row]
+        if existing.get("source_name") and existing.get("index") == index:
+            updated["source_name"] = existing.get("source_name")
+        self.y_columns[row] = updated
         item = self.y_list.item(row)
         if item is not None:
             item.setText(f"{name} (index {index})")
@@ -785,22 +1036,16 @@ class CreateImportFormatDialog(QDialog):
         return {
             "name": self.name_edit.text().strip(),
             "header": {
-                "enabled": self.header_enabled.currentText() == "True",
-                "lines": self.header_lines.value(),
-                "separator": self.header_sep.text(),
-                "same_as_data": self.header_same_as_data.currentText() == "True",
-                "ignore_prefix": self.header_ignore.text(),
-                "fields": [],
-                "column_names_from_header": False,
+                **self._build_header_config(),
+                "column_names_from_header": self.column_names_from_header,
             },
             "data": {
-                "separator": self.data_sep.text(),
-                "ignore_prefix": self.data_ignore.text(),
-                "header_lines": self.data_header_lines.value(),
+                **self._build_data_config(),
                 "columns": {
                     "x": {
                         "type": self.x_type.currentText(),
                         "index": self.x_index.value(),
+                        "source_name": self.x_source_name,
                     },
                     "y": list(self.y_columns),
                 },
@@ -902,31 +1147,61 @@ class EditImportFormatDialog(CreateImportFormatDialog):
 
         # 2. Header
         h = config.get("header", {})
-        self.header_enabled.setCurrentText("True" if h.get("enabled") else "False")
+        self.header_enabled.setChecked(bool(h.get("enabled")))
         self.header_lines.setValue(h.get("lines", 0))
-        self.header_sep.setText(h.get("separator", ""))
-        self.header_same_as_data.setCurrentText("True" if h.get("same_as_data") else "False")
         self.header_ignore.setText(h.get("ignore_prefix", ""))
+        if h.get("column_name_mode", "simple") == "expert":
+            self.column_mode_expert.setChecked(True)
+        else:
+            self.column_mode_simple.setChecked(True)
+        self.simple_select_method.setCurrentText(h.get("simple_select_method", "line_number"))
+        self.simple_column_line_number.setValue(int(h.get("simple_column_line_number", 1) or 1))
+        self.simple_marker_text.setText(h.get("simple_marker_text", ""))
+        self.simple_separator.setText(h.get("simple_separator", h.get("separator", "")))
+        self.expert_line_prefix.setText(h.get("expert_line_prefix", ""))
+        self.expert_regex.setText(h.get("expert_regex", ""))
+        self.expert_name_group.setValue(int(h.get("expert_name_group", 1) or 1))
+        expert_idx = h.get("expert_index_group", "")
+        if expert_idx in (None, ""):
+            self.expert_index_group.setValue(0)
+        else:
+            self.expert_index_group.setValue(int(expert_idx))
+        self.column_names_from_header = h.get("column_names_from_header", False)
+        self._toggle_column_source_mode()
+        self._toggle_simple_select_method()
+        self._toggle_header_controls()
 
         # 3. Data
         d = config.get("data", {})
         self.data_sep.setText(d.get("separator", ","))
         self.data_ignore.setText(d.get("ignore_prefix", "//"))
-        self.data_header_lines.setValue(d.get("header_lines", 0))
+        self.data_total_lines.setValue(d.get("total_data_lines", 0))
 
         # 4. Columns
         cols = d.get("columns", {})
         xc = cols.get("x", {})
         self.x_type.setCurrentText(xc.get("type", "column"))
         self.x_index.setValue(xc.get("index", 0))
+        self.x_source_name = xc.get("source_name", "")
 
         self.y_columns = []
         self.y_list.clear()
         for yc in cols.get("y", []):
             n = yc.get("name", "")
             i = yc.get("index", 0)
-            self.y_columns.append({"name": n, "index": i})
+            source_name = yc.get("source_name", "")
+            new_item = {"name": n, "index": i}
+            if source_name:
+                new_item["source_name"] = source_name
+            self.y_columns.append(new_item)
             self.y_list.addItem(f"{n} (index {i})")
+
+        if self.column_names_from_header:
+            self.detect_status.setText("Loaded detected-column mapping from config.")
+            self.detect_status.setStyleSheet("color: #0a7a0a;")
+        else:
+            self.detect_status.setText("No detection applied.")
+            self.detect_status.setStyleSheet("color: #666;")
 
         # 5. Conversions
         self.conversions = []
