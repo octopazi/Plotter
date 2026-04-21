@@ -69,6 +69,10 @@ class MainWindow(QMainWindow):
         line_scatter_action.triggered.connect(lambda: self.open_plot_dialog("line_scatter"))
         plot_menu.addAction(line_scatter_action)
 
+        run_config_plots_action = QAction("Run Config Plots", self)
+        run_config_plots_action.triggered.connect(self.open_run_config_plots_dialog)
+        plot_menu.addAction(run_config_plots_action)
+
         # Tools menu (FFT)
         tools_menu = menubar.addMenu("Tools")
         fft_action = QAction("FFT", self)
@@ -502,6 +506,73 @@ class MainWindow(QMainWindow):
             # 2. Show Plot Window after user confirmed input.
             self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=f"{dataset.name} - Plot")
 
+    def open_run_config_plots_dialog(self):
+        if not self.data_manager.datasets:
+            QMessageBox.warning(self, "No Data", "No datasets are loaded. Please import a datalog first.")
+            return
+
+        config_files = ConfigManager.get_available_configs()
+        if not config_files:
+            QMessageBox.warning(self, "No Config", "No config files found in the Config folder.")
+            return
+
+        item, ok = QInputDialog.getItem(
+            self,
+            "Run Config Plots",
+            "Select config for plot figures:",
+            config_files,
+            0,
+            False,
+        )
+        if not ok or not item:
+            return
+
+        dataset_ids = list(self.data_manager.datasets.keys())
+        summary = self._run_config_plots(
+            dataset_ids,
+            item,
+            require_enabled=False,
+            context_label="Run Config Plots",
+        )
+
+        if summary.get("config_error"):
+            QMessageBox.warning(
+                self,
+                "Run Config Plots",
+                f"Failed to load plot config: {summary.get('config_error')}",
+            )
+            return
+
+        if summary.get("aborted"):
+            QMessageBox.information(
+                self,
+                "Run Config Plots",
+                "Plot launch was cancelled.",
+            )
+            return
+
+        if summary.get("no_figures"):
+            QMessageBox.information(
+                self,
+                "Run Config Plots",
+                "No plot figures are defined in this config.",
+            )
+            return
+
+        msg = (
+            f"Created {summary.get('created', 0)} of {summary.get('requested', 0)} "
+            f"requested plot windows."
+        )
+        skipped = summary.get("skipped", [])
+        if skipped:
+            msg += "\nSkipped figures:"
+            for reason in skipped[:10]:
+                msg += f"\n- {reason}"
+            if len(skipped) > 10:
+                msg += f"\n- ... and {len(skipped) - 10} more"
+
+        QMessageBox.information(self, "Run Config Plots", msg)
+
     def _create_plot_window(self, dataset, x_col, y_cols, plot_type, window_title=None):
         from .plot_window import PlotWindow
 
@@ -553,13 +624,29 @@ class MainWindow(QMainWindow):
 
         return x_col, y_cols, None
 
-    def _run_auto_plot_after_import(self, imported_dataset_ids, config_filename):
+    def _confirm_bulk_plot_open(self, requested_count, context_label):
+        if requested_count <= 10:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "Large Plot Batch",
+            f"{context_label} will open {requested_count} plot windows.\n"
+            "This can slow down the UI. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
+
+    def _run_config_plots(self, dataset_ids, config_filename, require_enabled, context_label):
         summary = {
             "enabled": False,
             "created": 0,
             "requested": 0,
             "skipped": [],
             "config_error": None,
+            "aborted": False,
+            "no_figures": False,
         }
 
         try:
@@ -569,17 +656,21 @@ class MainWindow(QMainWindow):
             return summary
 
         plot_cfg = config.get("plot_config", {})
-        if not plot_cfg.get("enabled", False):
+        summary["enabled"] = bool(plot_cfg.get("enabled", False))
+        if require_enabled and not summary["enabled"]:
             return summary
 
         figures = plot_cfg.get("figures", [])
         if not figures:
+            summary["no_figures"] = True
             return summary
 
-        summary["enabled"] = True
-        summary["requested"] = len(imported_dataset_ids) * len(figures)
+        summary["requested"] = len(dataset_ids) * len(figures)
+        if not self._confirm_bulk_plot_open(summary["requested"], context_label):
+            summary["aborted"] = True
+            return summary
 
-        for ds_id in imported_dataset_ids:
+        for ds_id in dataset_ids:
             dataset = self.data_manager.get_dataset(ds_id)
             if not dataset:
                 continue
@@ -604,6 +695,14 @@ class MainWindow(QMainWindow):
                     summary["skipped"].append(f"{dataset.name} / figure #{idx}: failed to render ({str(e)})")
 
         return summary
+
+    def _run_auto_plot_after_import(self, imported_dataset_ids, config_filename):
+        return self._run_config_plots(
+            imported_dataset_ids,
+            config_filename,
+            require_enabled=True,
+            context_label="Auto plot after import",
+        )
 
     def open_fft_dialog(self):
         from .fft_dialog import FFTDialog
