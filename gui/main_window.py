@@ -5,18 +5,24 @@ from PyQt5.QtWidgets import (
     QMenu
 )
 from PyQt5.QtCore import Qt
+from core.app_settings import AppSettings
 from core.config_manager import ConfigManager
+from core.column_stats import compute_column_stats
 from core.file_loader import FileLoader
 from core.data_manager import DataManager
 from core.pandas_table_model import PandasTableModel
 
 class MainWindow(QMainWindow):
+    LAST_EDIT_CONFIG_KEY = "config/edit/last_selected"
+    LAST_RUN_CONFIG_PLOTS_KEY = "plot/run_config/last_selected"
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Plotter")
         self.resize(1000, 700)
         
         self.data_manager = DataManager()
+        self.table_model = None
 
         # Setup Central Widget with Splitter for Data Viewer
         self.setup_central_widget()
@@ -67,11 +73,19 @@ class MainWindow(QMainWindow):
         line_scatter_action.triggered.connect(lambda: self.open_plot_dialog("line_scatter"))
         plot_menu.addAction(line_scatter_action)
 
+        run_config_plots_action = QAction("Run Config Plots", self)
+        run_config_plots_action.triggered.connect(self.open_run_config_plots_dialog)
+        plot_menu.addAction(run_config_plots_action)
+
         # Tools menu (FFT)
         tools_menu = menubar.addMenu("Tools")
         fft_action = QAction("FFT", self)
         fft_action.triggered.connect(self.open_fft_dialog)
         tools_menu.addAction(fft_action)
+
+        stats_action = QAction("Column Statistics Summary", self)
+        stats_action.triggered.connect(lambda _checked=False: self.open_column_statistics())
+        tools_menu.addAction(stats_action)
         
         # Track active plot windows so they don't get garbage collected
         self.plot_windows = []
@@ -110,7 +124,12 @@ class MainWindow(QMainWindow):
         # Optimize view for large data sets
         self.data_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         # Enable editing of headers by double-clicking
-        self.data_table_view.horizontalHeader().setStretchLastSection(False)
+        header = self.data_table_view.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionsClickable(True)
+        header.sectionDoubleClicked.connect(self.edit_header)
+        header.setContextMenuPolicy(Qt.CustomContextMenu)
+        header.customContextMenuRequested.connect(self.show_table_header_context_menu)
         right_layout.addWidget(self.data_table_view)
 
         splitter.addWidget(left_panel)
@@ -127,7 +146,9 @@ class MainWindow(QMainWindow):
             print(f"User requested to import {len(dialog.selected_files)} files using config {dialog.selected_config}")
             try:
                 added_count = 0
+                imported_dataset_ids = []
                 all_conversion_errors = []   # (filename, ConversionError) pairs
+                all_column_warnings = []     # (filename, warning_text) pairs
                 
                 # Load each file and add to DataManager independently
                 for file_path in dialog.selected_files:
@@ -141,14 +162,18 @@ class MainWindow(QMainWindow):
                     # Collect conversion errors for this file
                     for err in result.get('conversion_errors', []):
                         all_conversion_errors.append((name, err))
+                    for warn in result.get('column_mismatch_warnings', []):
+                        all_column_warnings.append((name, warn))
                     
                     ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type="raw")
+                    imported_dataset_ids.append(ds_id)
                     added_count += 1
                 
                 if added_count == 0:
                     return
                 
                 self.update_file_list_widget()
+                auto_plot_summary = self._run_auto_plot_after_import(imported_dataset_ids, dialog.selected_config)
 
                 # Report any conversion errors as a single warning dialog
                 if all_conversion_errors:
@@ -161,9 +186,38 @@ class MainWindow(QMainWindow):
                         f"The affected output columns are absent from the dataset.\n\n"
                         + "\n\n".join(lines)
                     )
+
+                if all_column_warnings:
+                    lines = []
+                    for filename, warn in all_column_warnings:
+                        lines.append(f"[{filename}]  {warn}")
+                    QMessageBox.warning(
+                        self,
+                        "Column Name Mismatch Warnings",
+                        "Some file columns differ from names captured during detection.\n"
+                        "Import continues, but verify X/Y mapping for correctness.\n\n"
+                        + "\n".join(lines),
+                    )
                 
                 # Show summary
                 msg = f"Successfully imported {added_count} file(s)."
+                if auto_plot_summary.get("enabled"):
+                    msg += (
+                        f"\nAuto plots created: {auto_plot_summary.get('created', 0)}"
+                        f" / {auto_plot_summary.get('requested', 0)}."
+                    )
+                    skipped = auto_plot_summary.get("skipped", [])
+                    if skipped:
+                        msg += "\nSkipped figures:"
+                        for reason in skipped[:8]:
+                            msg += f"\n- {reason}"
+                        if len(skipped) > 8:
+                            msg += f"\n- ... and {len(skipped) - 8} more"
+                elif auto_plot_summary.get("config_error"):
+                    msg += (
+                        "\nAuto plot was skipped because plot config could not be loaded: "
+                        f"{auto_plot_summary.get('config_error')}"
+                    )
                 QMessageBox.information(self, "Success", msg)
                 
             except Exception as e:
@@ -181,6 +235,8 @@ class MainWindow(QMainWindow):
 
     def on_file_selected(self, current, previous):
         if not current:
+            self.table_model = None
+            self.data_table_view.setModel(None)
             return
             
         ds_id = current.data(Qt.UserRole)
@@ -190,11 +246,6 @@ class MainWindow(QMainWindow):
             # Update the table model directly with the dataset's dataframe
             self.table_model = PandasTableModel(dataset.df)
             self.data_table_view.setModel(self.table_model)
-            
-            # Enable header editing
-            header = self.data_table_view.horizontalHeader()
-            header.setSectionsClickable(True)
-            header.sectionDoubleClicked.connect(self.edit_header)
             
             # Edits in PandasTableModel modify dataset.df directly in memory, 
             # so no manual 'sync_edited_data' index mapping is required anymore!
@@ -232,6 +283,146 @@ class MainWindow(QMainWindow):
         menu.addAction(delete_action)
         menu.exec_(self.file_list_widget.mapToGlobal(position))
 
+    def show_table_header_context_menu(self, position):
+        """Show a right-click context menu on the data table headers."""
+        if not self.table_model:
+            return
+
+        header = self.data_table_view.horizontalHeader()
+        section = header.logicalIndexAt(position)
+        if section < 0:
+            return
+
+        try:
+            column_name = str(self.table_model._data.columns[section])
+        except Exception:
+            return
+
+        menu = QMenu(self)
+        stats_action = QAction("Column Statistics Summary", self)
+        stats_action.triggered.connect(lambda: self.open_column_statistics(section))
+        menu.addAction(stats_action)
+
+        delete_action = QAction(f"Delete Column '{column_name}'", self)
+        delete_action.triggered.connect(lambda: self.delete_column(section))
+        menu.addAction(delete_action)
+
+        menu.exec_(header.mapToGlobal(position))
+
+    def delete_column(self, section):
+        """Delete a column from the current dataset after user confirmation."""
+        if not self.table_model:
+            return
+
+        try:
+            section = int(section)
+        except (TypeError, ValueError):
+            QMessageBox.warning(self, "Invalid Selection", "Selected column is invalid.")
+            return
+
+        if section < 0 or section >= self.table_model.columnCount():
+            QMessageBox.warning(self, "Invalid Selection", "Selected column is out of range.")
+            return
+
+        column_name = str(self.table_model._data.columns[section])
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            f"Delete column '{column_name}' from this dataset?\nThis action cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+
+        if reply != QMessageBox.Yes:
+            return
+
+        if not self.table_model.delete_column(section):
+            QMessageBox.warning(self, "Delete Failed", f"Failed to delete column '{column_name}'.")
+            return
+
+        self.data_table_view.clearSelection()
+        QMessageBox.information(self, "Column Deleted", f"Column '{column_name}' was deleted.")
+
+    def get_current_dataset(self):
+        """Return the currently selected dataset object from the list panel."""
+        current_item = self.file_list_widget.currentItem()
+        if not current_item:
+            return None
+        ds_id = current_item.data(Qt.UserRole)
+        if not ds_id:
+            return None
+        return self.data_manager.get_dataset(ds_id)
+
+    def open_column_statistics(self, column_index=None):
+        dataset = self.get_current_dataset()
+        if dataset is None:
+            QMessageBox.warning(self, "No Data", "Please select a dataset first.")
+            return
+
+        df = dataset.df
+        if df.empty:
+            QMessageBox.warning(self, "No Data", "Selected dataset is empty.")
+            return
+
+        # QAction.triggered emits a bool, which is not a valid table column index.
+        if isinstance(column_index, bool):
+            column_index = None
+
+        if column_index is None:
+            current_idx = self.data_table_view.currentIndex()
+            if current_idx.isValid():
+                column_index = current_idx.column()
+
+        if column_index is None:
+            numeric_cols = df.select_dtypes(include="number").columns.tolist()
+            if not numeric_cols:
+                QMessageBox.warning(self, "No Numeric Columns", "This dataset has no numeric columns.")
+                return
+
+            selected_col, ok = QInputDialog.getItem(
+                self,
+                "Column Statistics Summary",
+                "Select numeric column:",
+                numeric_cols,
+                0,
+                False,
+            )
+            if not ok:
+                return
+            column_name = selected_col
+        else:
+            try:
+                column_index = int(column_index)
+            except (TypeError, ValueError):
+                QMessageBox.warning(self, "Invalid Selection", "Selected column is invalid.")
+                return
+
+            if column_index < 0 or column_index >= len(df.columns):
+                QMessageBox.warning(self, "Invalid Selection", "Selected column is out of range.")
+                return
+            column_name = df.columns[column_index]
+
+        if column_name == "_source_file":
+            QMessageBox.warning(
+                self,
+                "Unsupported Column",
+                "Statistics are not available for '_source_file'.",
+            )
+            return
+
+        try:
+            stats = compute_column_stats(df[column_name])
+        except ValueError as e:
+            QMessageBox.warning(self, "Statistics Unavailable", str(e))
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Statistics Error", f"Failed to compute statistics:\n{str(e)}")
+            return
+
+        from .column_stats_dialog import ColumnStatsDialog
+        dialog = ColumnStatsDialog(dataset.name, column_name, stats, self)
+        dialog.exec_()
+
     def delete_selected_dataset(self):
         """Delete the currently selected dataset from the DataManager and refresh the UI."""
         current_item = self.file_list_widget.currentItem()
@@ -255,6 +446,7 @@ class MainWindow(QMainWindow):
         self.data_manager.remove_dataset(ds_id)
 
         # Clear the table view if the deleted dataset was being displayed
+        self.table_model = None
         self.data_table_view.setModel(None)
 
         self.update_file_list_widget()
@@ -302,8 +494,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "No config files found in the Config folder.")
             return
 
-        item, ok = QInputDialog.getItem(self, "Edit Config", "Select config to edit:", config_files, 0, False)
+        current_index = AppSettings.get_item_index(self.LAST_EDIT_CONFIG_KEY, config_files)
+        item, ok = QInputDialog.getItem(self, "Edit Config", "Select config to edit:", config_files, current_index, False)
         if ok and item:
+            AppSettings.set_value(self.LAST_EDIT_CONFIG_KEY, item)
             config_path = ConfigManager.get_config_path(item)
             from .create_config import EditImportFormatDialog
             dialog = EditImportFormatDialog(config_path, self)
@@ -332,14 +526,209 @@ class MainWindow(QMainWindow):
         if dialog.exec_():
             x_col = dialog.selected_x
             y_cols = dialog.selected_y_columns
-            
+
             # 2. Show Plot Window after user confirmed input.
-            from .plot_window import PlotWindow
-            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type, window_title=f"{dataset.name} - Plot", parent=self)
-            
-            # Avoid early garbage collection by maintaining references to open plots
-            self.plot_windows.append(plot_win)
-            plot_win.show()
+            self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=f"{dataset.name} - Plot")
+
+    def open_run_config_plots_dialog(self):
+        if not self.data_manager.datasets:
+            QMessageBox.warning(self, "No Data", "No datasets are loaded. Please import a datalog first.")
+            return
+
+        config_files = ConfigManager.get_available_configs()
+        if not config_files:
+            QMessageBox.warning(self, "No Config", "No config files found in the Config folder.")
+            return
+
+        item, ok = QInputDialog.getItem(
+            self,
+            "Run Config Plots",
+            "Select config for plot figures:",
+            config_files,
+            AppSettings.get_item_index(self.LAST_RUN_CONFIG_PLOTS_KEY, config_files),
+            False,
+        )
+        if not ok or not item:
+            return
+
+        AppSettings.set_value(self.LAST_RUN_CONFIG_PLOTS_KEY, item)
+
+        dataset_ids = list(self.data_manager.datasets.keys())
+        summary = self._run_config_plots(
+            dataset_ids,
+            item,
+            require_enabled=False,
+            context_label="Run Config Plots",
+        )
+
+        if summary.get("config_error"):
+            QMessageBox.warning(
+                self,
+                "Run Config Plots",
+                f"Failed to load plot config: {summary.get('config_error')}",
+            )
+            return
+
+        if summary.get("aborted"):
+            QMessageBox.information(
+                self,
+                "Run Config Plots",
+                "Plot launch was cancelled.",
+            )
+            return
+
+        if summary.get("no_figures"):
+            QMessageBox.information(
+                self,
+                "Run Config Plots",
+                "No plot figures are defined in this config.",
+            )
+            return
+
+        msg = (
+            f"Created {summary.get('created', 0)} of {summary.get('requested', 0)} "
+            f"requested plot windows."
+        )
+        skipped = summary.get("skipped", [])
+        if skipped:
+            msg += "\nSkipped figures:"
+            for reason in skipped[:10]:
+                msg += f"\n- {reason}"
+            if len(skipped) > 10:
+                msg += f"\n- ... and {len(skipped) - 10} more"
+
+        QMessageBox.information(self, "Run Config Plots", msg)
+
+    def _create_plot_window(self, dataset, x_col, y_cols, plot_type, window_title=None):
+        from .plot_window import PlotWindow
+
+        plot_win = PlotWindow(
+            dataset.df,
+            x_col,
+            y_cols,
+            plot_type=plot_type,
+            window_title=window_title,
+            parent=self,
+        )
+
+        # Avoid early garbage collection by maintaining references to open plots
+        self.plot_windows.append(plot_win)
+        plot_win.show()
+        return plot_win
+
+    def _resolve_column_name(self, available_columns, requested_name):
+        req = str(requested_name).strip()
+        if not req:
+            return None
+
+        if req in available_columns:
+            return req
+
+        req_lower = req.lower()
+        for col in available_columns:
+            if col.lower() == req_lower:
+                return col
+        return None
+
+    def _build_auto_plot_selection(self, df, figure_cfg):
+        available_columns = [col for col in df.columns.tolist() if col != "_source_file"]
+        if len(available_columns) < 2:
+            return None, None, "not enough columns to build a plot"
+
+        x_col = self._resolve_column_name(available_columns, figure_cfg.get("x_column", ""))
+        if not x_col:
+            return None, None, f"x column '{figure_cfg.get('x_column', '')}' not found"
+
+        y_cols = []
+        for y_name in figure_cfg.get("y_columns", []):
+            y_col = self._resolve_column_name(available_columns, y_name)
+            if y_col and y_col != x_col and y_col not in y_cols:
+                y_cols.append(y_col)
+
+        if not y_cols:
+            return None, None, "no valid y columns were found"
+
+        return x_col, y_cols, None
+
+    def _confirm_bulk_plot_open(self, requested_count, context_label):
+        if requested_count <= 10:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "Large Plot Batch",
+            f"{context_label} will open {requested_count} plot windows.\n"
+            "This can slow down the UI. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
+
+    def _run_config_plots(self, dataset_ids, config_filename, require_enabled, context_label):
+        summary = {
+            "enabled": False,
+            "created": 0,
+            "requested": 0,
+            "skipped": [],
+            "config_error": None,
+            "aborted": False,
+            "no_figures": False,
+        }
+
+        try:
+            config = ConfigManager.load_config(config_filename)
+        except Exception as e:
+            summary["config_error"] = str(e)
+            return summary
+
+        plot_cfg = config.get("plot_config", {})
+        summary["enabled"] = bool(plot_cfg.get("enabled", False))
+        if require_enabled and not summary["enabled"]:
+            return summary
+
+        figures = plot_cfg.get("figures", [])
+        if not figures:
+            summary["no_figures"] = True
+            return summary
+
+        summary["requested"] = len(dataset_ids) * len(figures)
+        if not self._confirm_bulk_plot_open(summary["requested"], context_label):
+            summary["aborted"] = True
+            return summary
+
+        for ds_id in dataset_ids:
+            dataset = self.data_manager.get_dataset(ds_id)
+            if not dataset:
+                continue
+
+            for idx, figure_cfg in enumerate(figures, start=1):
+                x_col, y_cols, reason = self._build_auto_plot_selection(dataset.df, figure_cfg)
+                if reason:
+                    summary["skipped"].append(f"{dataset.name} / figure #{idx}: {reason}")
+                    continue
+
+                plot_type = str(figure_cfg.get("plot_type", "scatter"))
+                if plot_type not in ("scatter", "line_scatter"):
+                    plot_type = "scatter"
+
+                fig_title = str(figure_cfg.get("title", "")).strip()
+                window_title = f"{dataset.name} - {fig_title}" if fig_title else f"{dataset.name} - Auto Plot {idx}"
+
+                try:
+                    self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=window_title)
+                    summary["created"] += 1
+                except Exception as e:
+                    summary["skipped"].append(f"{dataset.name} / figure #{idx}: failed to render ({str(e)})")
+
+        return summary
+
+    def _run_auto_plot_after_import(self, imported_dataset_ids, config_filename):
+        return self._run_config_plots(
+            imported_dataset_ids,
+            config_filename,
+            require_enabled=True,
+            context_label="Auto plot after import",
+        )
 
     def open_fft_dialog(self):
         from .fft_dialog import FFTDialog

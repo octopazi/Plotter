@@ -7,9 +7,16 @@
   "header": {
     "enabled": true,
     "lines": 5,
-    "separator": ":",
-    "same_as_data": false,
     "ignore_prefix": "#",
+    "column_name_mode": "simple",
+    "simple_select_method": "line_number",
+    "simple_column_line_number": 5,
+    "simple_marker_text": "",
+    "simple_separator": ",",
+    "expert_line_prefix": "%T",
+    "expert_regex": "^%T(\\d+):\\s*([^\\(]+)",
+    "expert_name_group": 2,
+    "expert_index_group": 1,
     "fields": [
       { "match": "Date",     "key": "date",     "type": "string" },
       { "match": "Version",  "key": "version",  "type": "string" },
@@ -21,7 +28,7 @@
   "data": {
     "separator": ",",
     "ignore_prefix": "//",
-    "header_lines": 1,
+    "total_data_lines": 0,
     "columns": {
       "x": { "type": "column", "index": 0, "name": "time_ms" },
       "y": [
@@ -31,6 +38,25 @@
         { "name": "mode_code", "index": 4 }
       ]
     }
+  },
+
+  "plot_config": {
+    "_doc": "Optional auto-plot section. If enabled, each imported file will generate the configured figures.",
+    "enabled": true,
+    "figures": [
+      {
+        "title": "Primary Signals",
+        "plot_type": "scatter",
+        "x_column": "time_ms",
+        "y_columns": ["raw_adc", "voltage"]
+      },
+      {
+        "title": "Status Overview",
+        "plot_type": "line_scatter",
+        "x_column": "time_ms",
+        "y_columns": ["fault_code"]
+      }
+    ]
   },
 
   "conversions": [

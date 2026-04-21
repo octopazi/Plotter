@@ -3,6 +3,10 @@ import json
 import pandas as pd
 from .config_manager import ConfigManager
 from .conversion_handlers import apply_conversions
+from .header_detector import (
+    extract_header_metadata,
+    build_config_column_mismatch_warnings,
+)
 
 class FileLoader:
     """Handles the Loading and Parsing of Data Files based on JSON Configurations."""
@@ -55,49 +59,35 @@ class FileLoader:
         header_config = config.get("header", {})
         data_config = config.get("data", {})
         conversions = config.get("conversions", [])
-        
+
         metadata = {}
-        header_lines = header_config.get("lines", 0)
-        
-        # 1. Parse Header
-        if header_config.get("enabled", False):
-            with open(file_path, 'r', encoding='utf-8') as f:
-                for i in range(header_lines):
-                    line = f.readline().strip()
-                    
-                    # Handle ignore prefix for header
-                    ignore_prefix = header_config.get("ignore_prefix")
-                    if ignore_prefix and line.startswith(ignore_prefix):
-                        line = line[len(ignore_prefix):].strip()
-                        
-                    sep = header_config.get("separator", ":")
-                    if sep in line:
-                        parts = line.split(sep, 1)
-                        key_part, val_part = parts[0].strip(), parts[1].strip()
-                        
-                        # Match fields with config mapping
-                        for field in header_config.get("fields", []):
-                            if field.get("match") == key_part:
-                                val = val_part
-                                if field.get("type") == "float":
-                                    try:
-                                        val = float(val_part)
-                                    except ValueError:
-                                        pass
-                                metadata[field.get("key")] = val
+        header_enabled = bool(header_config.get("enabled", False))
+        header_lines = int(header_config.get("lines", 0) or 0)
+        header_skip = header_lines if header_enabled else 0
+
+        # 1. Parse Header Metadata
+        if header_enabled:
+            metadata = extract_header_metadata(file_path, header_config)
                                 
         # 2. Parse Data block
         data_sep = data_config.get("separator", ",")
         data_ignore_prefix = data_config.get("ignore_prefix", None)
-            
-        has_col_names = header_config.get("column_names_from_header", False)
-        
-        # We start skipping lines corresponding to the metadata block
-        # plus any additional lines specified by "header_lines" in the data object.
-        skip_total = header_lines + data_config.get("header_lines", 0)
-        
+
+        has_col_names = bool(header_config.get("column_names_from_header", False))
+        has_header_row = has_col_names and header_skip > 0
+        max_rows = int(data_config.get("total_data_lines", 0) or 0)
+        nrows = max_rows if max_rows > 0 else None
+
+        # If header row is enabled, treat the last header-area line as DataFrame column names.
+        if has_header_row:
+            skip_total = header_skip - 1
+            header_row = 0
+        else:
+            skip_total = header_skip
+            header_row = None
+
         # Determine if we have column names to read from the CSV
-        header_row = 0 if has_col_names else None 
+        
 
         print(f"--- DEBUG LOAD PARAMS ---")
         print(f"File Path: {file_path}")
@@ -115,6 +105,7 @@ class FileLoader:
                 skiprows=skip_total,
                 comment=data_ignore_prefix,
                 header=header_row,
+                nrows=nrows,
                 engine="python",
                 skipinitialspace=True
             )
@@ -129,7 +120,7 @@ class FileLoader:
         
         # Give column standard abstract names like "col0", "col1" if no names exist in header.
         original_cols = df.columns.tolist()
-        if not has_col_names:
+        if not has_header_row:
             df.columns = [f"col{i}" for i in range(len(df.columns))]
         
         # 3. Map Standard/Domain Column Names FIRST
@@ -145,7 +136,7 @@ class FileLoader:
             # Use the data from the specified column index
             if "index" in x_def:
                 x_idx = x_def["index"]
-                c_name = f"col{x_idx}" if not has_col_names else original_cols[x_idx]
+                c_name = f"col{x_idx}" if not has_header_row else original_cols[x_idx]
                 if c_name in df.columns:
                     rename_map[c_name] = x_def.get("name", "x")
         elif x_type == "index":
@@ -159,7 +150,7 @@ class FileLoader:
             if "index" in y_def:
                 y_idx = y_def["index"]
                 y_title = y_def.get("name", f"y_{y_idx}")
-                c_name = f"col{y_idx}" if not has_col_names else original_cols[y_idx]
+                c_name = f"col{y_idx}" if not has_header_row else original_cols[y_idx]
                 if c_name in df.columns:
                     rename_map[c_name] = y_title
                     
@@ -170,9 +161,15 @@ class FileLoader:
         # produced by an earlier step.  Failures are collected and returned
         # to the caller rather than silently ignored.
         conversion_errors = apply_conversions(df, conversions)
+        column_mismatch_warnings = build_config_column_mismatch_warnings(
+            data_config.get("columns", {}),
+            original_cols,
+            has_header_row,
+        )
                 
         return {
             "metadata": metadata,
             "dataframe": df,
-            "conversion_errors": conversion_errors
+            "conversion_errors": conversion_errors,
+            "column_mismatch_warnings": column_mismatch_warnings,
         }
