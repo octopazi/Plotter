@@ -30,10 +30,11 @@ This is an **alpha release** for early user feedback. Features and UI may change
 - **Flexible Plotting**
   - Scatter/line plots with multi y-axis support and draggable legends.
   - Per-axis trendline and moving average overlays.
+  - Optional config-driven auto-plot after import with multiple figure definitions.
   - Roadmap: cross-dataset plotting, advanced plot types (histogram, box plot), interactive inspection tools.
 
 - **User Experience**
-  - Dynamic config creation GUI (3-tab dialog: File Format, Columns, Conversions).
+  - Dynamic config creation GUI (4-tab dialog: File Format, Columns, Conversions, Plot Config).
   - Formula error handling with detailed GUI warnings.
   - Modern PyQt5 interface with persistent settings.
 

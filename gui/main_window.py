@@ -14,6 +14,7 @@ from core.pandas_table_model import PandasTableModel
 
 class MainWindow(QMainWindow):
     LAST_EDIT_CONFIG_KEY = "config/edit/last_selected"
+    LAST_RUN_CONFIG_PLOTS_KEY = "plot/run_config/last_selected"
 
     def __init__(self):
         super().__init__()
@@ -71,6 +72,10 @@ class MainWindow(QMainWindow):
         line_scatter_action = QAction("Line + Scatter Plot", self)
         line_scatter_action.triggered.connect(lambda: self.open_plot_dialog("line_scatter"))
         plot_menu.addAction(line_scatter_action)
+
+        run_config_plots_action = QAction("Run Config Plots", self)
+        run_config_plots_action.triggered.connect(self.open_run_config_plots_dialog)
+        plot_menu.addAction(run_config_plots_action)
 
         # Tools menu (FFT)
         tools_menu = menubar.addMenu("Tools")
@@ -141,6 +146,7 @@ class MainWindow(QMainWindow):
             print(f"User requested to import {len(dialog.selected_files)} files using config {dialog.selected_config}")
             try:
                 added_count = 0
+                imported_dataset_ids = []
                 all_conversion_errors = []   # (filename, ConversionError) pairs
                 
                 # Load each file and add to DataManager independently
@@ -157,12 +163,14 @@ class MainWindow(QMainWindow):
                         all_conversion_errors.append((name, err))
                     
                     ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type="raw")
+                    imported_dataset_ids.append(ds_id)
                     added_count += 1
                 
                 if added_count == 0:
                     return
                 
                 self.update_file_list_widget()
+                auto_plot_summary = self._run_auto_plot_after_import(imported_dataset_ids, dialog.selected_config)
 
                 # Report any conversion errors as a single warning dialog
                 if all_conversion_errors:
@@ -178,6 +186,23 @@ class MainWindow(QMainWindow):
                 
                 # Show summary
                 msg = f"Successfully imported {added_count} file(s)."
+                if auto_plot_summary.get("enabled"):
+                    msg += (
+                        f"\nAuto plots created: {auto_plot_summary.get('created', 0)}"
+                        f" / {auto_plot_summary.get('requested', 0)}."
+                    )
+                    skipped = auto_plot_summary.get("skipped", [])
+                    if skipped:
+                        msg += "\nSkipped figures:"
+                        for reason in skipped[:8]:
+                            msg += f"\n- {reason}"
+                        if len(skipped) > 8:
+                            msg += f"\n- ... and {len(skipped) - 8} more"
+                elif auto_plot_summary.get("config_error"):
+                    msg += (
+                        "\nAuto plot was skipped because plot config could not be loaded: "
+                        f"{auto_plot_summary.get('config_error')}"
+                    )
                 QMessageBox.information(self, "Success", msg)
                 
             except Exception as e:
@@ -483,14 +508,209 @@ class MainWindow(QMainWindow):
         if dialog.exec_():
             x_col = dialog.selected_x
             y_cols = dialog.selected_y_columns
-            
+
             # 2. Show Plot Window after user confirmed input.
-            from .plot_window import PlotWindow
-            plot_win = PlotWindow(df, x_col, y_cols, plot_type=plot_type, window_title=f"{dataset.name} - Plot", parent=self)
-            
-            # Avoid early garbage collection by maintaining references to open plots
-            self.plot_windows.append(plot_win)
-            plot_win.show()
+            self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=f"{dataset.name} - Plot")
+
+    def open_run_config_plots_dialog(self):
+        if not self.data_manager.datasets:
+            QMessageBox.warning(self, "No Data", "No datasets are loaded. Please import a datalog first.")
+            return
+
+        config_files = ConfigManager.get_available_configs()
+        if not config_files:
+            QMessageBox.warning(self, "No Config", "No config files found in the Config folder.")
+            return
+
+        item, ok = QInputDialog.getItem(
+            self,
+            "Run Config Plots",
+            "Select config for plot figures:",
+            config_files,
+            AppSettings.get_item_index(self.LAST_RUN_CONFIG_PLOTS_KEY, config_files),
+            False,
+        )
+        if not ok or not item:
+            return
+
+        AppSettings.set_value(self.LAST_RUN_CONFIG_PLOTS_KEY, item)
+
+        dataset_ids = list(self.data_manager.datasets.keys())
+        summary = self._run_config_plots(
+            dataset_ids,
+            item,
+            require_enabled=False,
+            context_label="Run Config Plots",
+        )
+
+        if summary.get("config_error"):
+            QMessageBox.warning(
+                self,
+                "Run Config Plots",
+                f"Failed to load plot config: {summary.get('config_error')}",
+            )
+            return
+
+        if summary.get("aborted"):
+            QMessageBox.information(
+                self,
+                "Run Config Plots",
+                "Plot launch was cancelled.",
+            )
+            return
+
+        if summary.get("no_figures"):
+            QMessageBox.information(
+                self,
+                "Run Config Plots",
+                "No plot figures are defined in this config.",
+            )
+            return
+
+        msg = (
+            f"Created {summary.get('created', 0)} of {summary.get('requested', 0)} "
+            f"requested plot windows."
+        )
+        skipped = summary.get("skipped", [])
+        if skipped:
+            msg += "\nSkipped figures:"
+            for reason in skipped[:10]:
+                msg += f"\n- {reason}"
+            if len(skipped) > 10:
+                msg += f"\n- ... and {len(skipped) - 10} more"
+
+        QMessageBox.information(self, "Run Config Plots", msg)
+
+    def _create_plot_window(self, dataset, x_col, y_cols, plot_type, window_title=None):
+        from .plot_window import PlotWindow
+
+        plot_win = PlotWindow(
+            dataset.df,
+            x_col,
+            y_cols,
+            plot_type=plot_type,
+            window_title=window_title,
+            parent=self,
+        )
+
+        # Avoid early garbage collection by maintaining references to open plots
+        self.plot_windows.append(plot_win)
+        plot_win.show()
+        return plot_win
+
+    def _resolve_column_name(self, available_columns, requested_name):
+        req = str(requested_name).strip()
+        if not req:
+            return None
+
+        if req in available_columns:
+            return req
+
+        req_lower = req.lower()
+        for col in available_columns:
+            if col.lower() == req_lower:
+                return col
+        return None
+
+    def _build_auto_plot_selection(self, df, figure_cfg):
+        available_columns = [col for col in df.columns.tolist() if col != "_source_file"]
+        if len(available_columns) < 2:
+            return None, None, "not enough columns to build a plot"
+
+        x_col = self._resolve_column_name(available_columns, figure_cfg.get("x_column", ""))
+        if not x_col:
+            return None, None, f"x column '{figure_cfg.get('x_column', '')}' not found"
+
+        y_cols = []
+        for y_name in figure_cfg.get("y_columns", []):
+            y_col = self._resolve_column_name(available_columns, y_name)
+            if y_col and y_col != x_col and y_col not in y_cols:
+                y_cols.append(y_col)
+
+        if not y_cols:
+            return None, None, "no valid y columns were found"
+
+        return x_col, y_cols, None
+
+    def _confirm_bulk_plot_open(self, requested_count, context_label):
+        if requested_count <= 10:
+            return True
+
+        reply = QMessageBox.question(
+            self,
+            "Large Plot Batch",
+            f"{context_label} will open {requested_count} plot windows.\n"
+            "This can slow down the UI. Continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return reply == QMessageBox.Yes
+
+    def _run_config_plots(self, dataset_ids, config_filename, require_enabled, context_label):
+        summary = {
+            "enabled": False,
+            "created": 0,
+            "requested": 0,
+            "skipped": [],
+            "config_error": None,
+            "aborted": False,
+            "no_figures": False,
+        }
+
+        try:
+            config = ConfigManager.load_config(config_filename)
+        except Exception as e:
+            summary["config_error"] = str(e)
+            return summary
+
+        plot_cfg = config.get("plot_config", {})
+        summary["enabled"] = bool(plot_cfg.get("enabled", False))
+        if require_enabled and not summary["enabled"]:
+            return summary
+
+        figures = plot_cfg.get("figures", [])
+        if not figures:
+            summary["no_figures"] = True
+            return summary
+
+        summary["requested"] = len(dataset_ids) * len(figures)
+        if not self._confirm_bulk_plot_open(summary["requested"], context_label):
+            summary["aborted"] = True
+            return summary
+
+        for ds_id in dataset_ids:
+            dataset = self.data_manager.get_dataset(ds_id)
+            if not dataset:
+                continue
+
+            for idx, figure_cfg in enumerate(figures, start=1):
+                x_col, y_cols, reason = self._build_auto_plot_selection(dataset.df, figure_cfg)
+                if reason:
+                    summary["skipped"].append(f"{dataset.name} / figure #{idx}: {reason}")
+                    continue
+
+                plot_type = str(figure_cfg.get("plot_type", "scatter"))
+                if plot_type not in ("scatter", "line_scatter"):
+                    plot_type = "scatter"
+
+                fig_title = str(figure_cfg.get("title", "")).strip()
+                window_title = f"{dataset.name} - {fig_title}" if fig_title else f"{dataset.name} - Auto Plot {idx}"
+
+                try:
+                    self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=window_title)
+                    summary["created"] += 1
+                except Exception as e:
+                    summary["skipped"].append(f"{dataset.name} / figure #{idx}: failed to render ({str(e)})")
+
+        return summary
+
+    def _run_auto_plot_after_import(self, imported_dataset_ids, config_filename):
+        return self._run_config_plots(
+            imported_dataset_ids,
+            config_filename,
+            require_enabled=True,
+            context_label="Auto plot after import",
+        )
 
     def open_fft_dialog(self):
         from .fft_dialog import FFTDialog
