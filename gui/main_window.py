@@ -14,6 +14,7 @@ from core.pandas_table_model import PandasTableModel
 
 class MainWindow(QMainWindow):
     LAST_EDIT_CONFIG_KEY = "config/edit/last_selected"
+    LAST_RUN_CONFIG_PLOTS_KEY = "plot/run_config/last_selected"
 
     def __init__(self):
         super().__init__()
@@ -526,11 +527,13 @@ class MainWindow(QMainWindow):
             "Run Config Plots",
             "Select config for plot figures:",
             config_files,
-            0,
+            AppSettings.get_item_index(self.LAST_RUN_CONFIG_PLOTS_KEY, config_files),
             False,
         )
         if not ok or not item:
             return
+
+        AppSettings.set_value(self.LAST_RUN_CONFIG_PLOTS_KEY, item)
 
         dataset_ids = list(self.data_manager.datasets.keys())
         summary = self._run_config_plots(
