@@ -36,6 +36,8 @@ class PlotWindow(QMainWindow):
         self._picker_click_cursor = None
         self._cursor_x_values = []
         self._cursor_lines = []
+        self._dragging_cursor_index = None
+        self._cursor_pick_threshold_px = 8
         
         # Initial Plot Settings
         self.settings = {
@@ -106,6 +108,8 @@ class PlotWindow(QMainWindow):
 
         # Keep click-based vertical cursor interaction as a custom handler.
         self.canvas.mpl_connect('button_press_event', self.on_mouse_click)
+        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_drag)
+        self.canvas.mpl_connect('button_release_event', self.on_mouse_release)
 
     def toggle_coordinate_picker(self, enabled):
         if enabled and mplcursors is None:
@@ -117,11 +121,23 @@ class PlotWindow(QMainWindow):
             return
 
         self.coordinate_picker_enabled = bool(enabled)
+        if self.coordinate_picker_enabled and self.vertical_cursor_enabled:
+            self.cursor_btn.blockSignals(True)
+            self.cursor_btn.setChecked(False)
+            self.cursor_btn.blockSignals(False)
+            self.vertical_cursor_enabled = False
+            self.clear_vertical_cursors()
         self._set_picker_enabled(self.coordinate_picker_enabled)
         self._update_inspection_label()
 
     def toggle_vertical_cursors(self, enabled):
         self.vertical_cursor_enabled = bool(enabled)
+        if self.vertical_cursor_enabled and self.coordinate_picker_enabled:
+            self.coord_picker_btn.blockSignals(True)
+            self.coord_picker_btn.setChecked(False)
+            self.coord_picker_btn.blockSignals(False)
+            self.coordinate_picker_enabled = False
+            self._set_picker_enabled(False)
         if not self.vertical_cursor_enabled:
             self.clear_vertical_cursors()
         self._update_inspection_label()
@@ -157,17 +173,22 @@ class PlotWindow(QMainWindow):
             setattr(self, attr, None)
 
     def _set_picker_enabled(self, enabled):
-        any_cursor = False
-        for cursor in (self._picker_hover_cursor, self._picker_click_cursor):
-            if cursor is None:
-                continue
-            any_cursor = True
-            cursor.enabled = bool(enabled)
-            cursor.visible = bool(enabled)
+        hover = self._picker_hover_cursor
+        click = self._picker_click_cursor
+
+        if hover is not None:
+            hover.enabled = bool(enabled)
+            hover.visible = bool(enabled)
             if not enabled:
-                for selection in tuple(cursor.selections):
-                    cursor.remove_selection(selection)
-        if any_cursor and not enabled:
+                for selection in tuple(hover.selections):
+                    hover.remove_selection(selection)
+
+        if click is not None:
+            # Keep placed annotations visible even when picker mode is disabled.
+            click.enabled = bool(enabled)
+            click.visible = True
+
+        if not enabled and (hover is not None or click is not None):
             self.canvas.draw_idle()
 
     def _format_picker_annotation(self, selection):
@@ -242,6 +263,7 @@ class PlotWindow(QMainWindow):
             annotation_kwargs={
                 'bbox': dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8),
                 'fontsize': 9,
+                'arrowprops': dict(arrowstyle='->', color='0.35', linewidth=1.0),
             },
         )
         self._picker_click_cursor.connect("add", self._on_picker_click_add)
@@ -255,22 +277,62 @@ class PlotWindow(QMainWindow):
                 pass
         self._cursor_lines = []
         self._cursor_x_values = []
+        self._dragging_cursor_index = None
         self._update_inspection_label()
         self.canvas.draw_idle()
+
+    def _find_cursor_index_at_event(self, event):
+        if event.x is None or not self._cursor_lines:
+            return None
+
+        best_idx = None
+        best_dist = None
+        for idx, x_val in enumerate(self._cursor_x_values):
+            x_disp = self.ax.transData.transform((x_val, 0))[0]
+            dist = abs(float(event.x) - float(x_disp))
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best_idx = idx
+
+        if best_dist is None or best_dist > self._cursor_pick_threshold_px:
+            return None
+        return best_idx
 
     def on_mouse_click(self, event):
         if not self.vertical_cursor_enabled:
             return
-        if event.button != 1:
-            return
         if event.inaxes not in [self.ax, getattr(self, 'ax2', None)]:
+            return
+
+        if event.button == 3:
+            idx = self._find_cursor_index_at_event(event)
+            if idx is None:
+                return
+            try:
+                self._cursor_lines[idx].remove()
+            except Exception:
+                pass
+            del self._cursor_lines[idx]
+            del self._cursor_x_values[idx]
+            self._dragging_cursor_index = None
+            self._update_inspection_label()
+            self.canvas.draw_idle()
+            return
+
+        if event.button != 1:
             return
         if event.xdata is None:
             return
 
+        # Left-click on an existing cursor line starts dragging instead of placing a new cursor.
+        idx = self._find_cursor_index_at_event(event)
+        if idx is not None:
+            self._dragging_cursor_index = idx
+            return
+
         x_val = float(event.xdata)
         if len(self._cursor_x_values) >= 2:
-            self.clear_vertical_cursors()
+            return
 
         line = self.ax.axvline(x_val, color='tab:purple', linestyle='--', linewidth=1.2, zorder=92)
         self._cursor_lines.append(line)
@@ -278,6 +340,31 @@ class PlotWindow(QMainWindow):
 
         self._update_inspection_label()
         self.canvas.draw_idle()
+
+    def on_mouse_drag(self, event):
+        if not self.vertical_cursor_enabled:
+            return
+        if self._dragging_cursor_index is None:
+            return
+        if event.inaxes not in [self.ax, getattr(self, 'ax2', None)]:
+            return
+        if event.xdata is None:
+            return
+
+        idx = self._dragging_cursor_index
+        if idx >= len(self._cursor_lines):
+            self._dragging_cursor_index = None
+            return
+
+        x_val = float(event.xdata)
+        self._cursor_lines[idx].set_xdata([x_val, x_val])
+        self._cursor_x_values[idx] = x_val
+        self._update_inspection_label()
+        self.canvas.draw_idle()
+
+    def on_mouse_release(self, event):
+        if event.button == 1:
+            self._dragging_cursor_index = None
 
     def closeEvent(self, event):
         """Clean up references when the plot window is closed."""
