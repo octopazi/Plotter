@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
     QMenu
 )
 from PyQt5.QtCore import Qt
+from core.app_settings import AppSettings
 from core.config_manager import ConfigManager
 from core.column_stats import compute_column_stats
 from core.file_loader import FileLoader
@@ -12,6 +13,8 @@ from core.data_manager import DataManager
 from core.pandas_table_model import PandasTableModel
 
 class MainWindow(QMainWindow):
+    LAST_EDIT_CONFIG_KEY = "config/edit/last_selected"
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Plotter")
@@ -472,8 +475,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", "No config files found in the Config folder.")
             return
 
-        item, ok = QInputDialog.getItem(self, "Edit Config", "Select config to edit:", config_files, 0, False)
+        current_index = AppSettings.get_item_index(self.LAST_EDIT_CONFIG_KEY, config_files)
+        item, ok = QInputDialog.getItem(self, "Edit Config", "Select config to edit:", config_files, current_index, False)
         if ok and item:
+            AppSettings.set_value(self.LAST_EDIT_CONFIG_KEY, item)
             config_path = ConfigManager.get_config_path(item)
             from .create_config import EditImportFormatDialog
             dialog = EditImportFormatDialog(config_path, self)
