@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Qt5Agg')
 import numpy as np
+import mplcursors
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -31,10 +32,8 @@ class PlotWindow(QMainWindow):
         self.coordinate_picker_enabled = False
         self.vertical_cursor_enabled = False
         self._inspect_series = []
-        self._crosshair_vline = None
-        self._crosshair_hline = None
-        self._crosshair_annot = None
-        self._crosshair_axis = None
+        self._picker_hover_cursor = None
+        self._picker_click_cursor = None
         self._cursor_x_values = []
         self._cursor_lines = []
         
@@ -105,14 +104,20 @@ class PlotWindow(QMainWindow):
         # Create Main Axis
         self.ax = self.fig.add_subplot(111)
 
-        # Connect matplotlib inspection events once.
-        self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
+        # Keep click-based vertical cursor interaction as a custom handler.
         self.canvas.mpl_connect('button_press_event', self.on_mouse_click)
 
     def toggle_coordinate_picker(self, enabled):
+        if enabled and mplcursors is None:
+            self.coordinate_picker_enabled = False
+            self.coord_picker_btn.blockSignals(True)
+            self.coord_picker_btn.setChecked(False)
+            self.coord_picker_btn.blockSignals(False)
+            self.inspect_label.setText("Inspection: Picker unavailable")
+            return
+
         self.coordinate_picker_enabled = bool(enabled)
-        if not self.coordinate_picker_enabled:
-            self._hide_crosshair()
+        self._set_picker_enabled(self.coordinate_picker_enabled)
         self._update_inspection_label()
 
     def toggle_vertical_cursors(self, enabled):
@@ -140,22 +145,107 @@ class PlotWindow(QMainWindow):
         else:
             self.inspect_label.setText(f"Inspection: {' + '.join(parts)}")
 
-    def _hide_crosshair(self):
-        for artist in (self._crosshair_vline, self._crosshair_hline, self._crosshair_annot):
-            if artist is not None:
-                artist.set_visible(False)
-        self.canvas.draw_idle()
-
-    def _clear_crosshair_artists(self):
-        for attr in ("_crosshair_vline", "_crosshair_hline", "_crosshair_annot"):
-            artist = getattr(self, attr)
-            if artist is not None:
-                try:
-                    artist.remove()
-                except Exception:
-                    pass
+    def _remove_picker_cursors(self):
+        for attr in ("_picker_hover_cursor", "_picker_click_cursor"):
+            cursor = getattr(self, attr)
+            if cursor is None:
+                continue
+            try:
+                cursor.remove()
+            except Exception:
+                pass
             setattr(self, attr, None)
-        self._crosshair_axis = None
+
+    def _set_picker_enabled(self, enabled):
+        any_cursor = False
+        for cursor in (self._picker_hover_cursor, self._picker_click_cursor):
+            if cursor is None:
+                continue
+            any_cursor = True
+            cursor.enabled = bool(enabled)
+            cursor.visible = bool(enabled)
+            if not enabled:
+                for selection in tuple(cursor.selections):
+                    cursor.remove_selection(selection)
+        if any_cursor and not enabled:
+            self.canvas.draw_idle()
+
+    def _format_picker_annotation(self, selection):
+        label = selection.artist.get_label() if selection.artist is not None else ""
+        if label.startswith("_"):
+            label = "Series"
+
+        target = selection.target
+        x_val = float(target[0])
+        y_val = float(target[1])
+        selection.annotation.set_text(f"{label}\nX={x_val:.6g}, Y={y_val:.6g}")
+
+    def _on_picker_hover_add(self, selection):
+        # Hover cursor keeps prior coordinate readout and adds transient crosshair lines.
+        self._format_picker_annotation(selection)
+        axis = selection.artist.axes if selection.artist is not None else None
+        if axis is None:
+            return
+        x_val = float(selection.target[0])
+        y_val = float(selection.target[1])
+        vline = axis.axvline(x_val, color='gray', linestyle='--', linewidth=0.8, alpha=0.8, zorder=90)
+        hline = axis.axhline(y_val, color='gray', linestyle='--', linewidth=0.8, alpha=0.8, zorder=90)
+        if hasattr(vline, 'set_in_layout'):
+            vline.set_in_layout(False)
+        if hasattr(hline, 'set_in_layout'):
+            hline.set_in_layout(False)
+        selection.extras.extend([vline, hline])
+
+    def _on_picker_click_add(self, selection):
+        # Click cursor supports multiple pinned, draggable annotations.
+        self._format_picker_annotation(selection)
+        selection.annotation.draggable(True)
+
+    def _rebuild_picker_cursor(self):
+        self._remove_picker_cursors()
+        if mplcursors is None:
+            return
+
+        artists = [
+            series.get('line')
+            for series in self._inspect_series
+            if series.get('line') is not None
+        ]
+        if not artists:
+            return
+
+        self._picker_hover_cursor = mplcursors.cursor(
+            artists,
+            hover=mplcursors.HoverMode.Transient,
+            multiple=False,
+            highlight=False,
+            bindings={
+                'toggle_enabled': None,
+                'toggle_visible': None,
+            },
+            annotation_kwargs={
+                'bbox': dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8),
+                'fontsize': 9,
+            },
+        )
+        self._picker_hover_cursor.connect("add", self._on_picker_hover_add)
+
+        self._picker_click_cursor = mplcursors.cursor(
+            artists,
+            hover=False,
+            multiple=True,
+            highlight=False,
+            bindings={
+                'toggle_enabled': None,
+                'toggle_visible': None,
+            },
+            annotation_kwargs={
+                'bbox': dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8),
+                'fontsize': 9,
+            },
+        )
+        self._picker_click_cursor.connect("add", self._on_picker_click_add)
+        self._set_picker_enabled(self.coordinate_picker_enabled)
 
     def clear_vertical_cursors(self):
         for line in self._cursor_lines:
@@ -166,90 +256,6 @@ class PlotWindow(QMainWindow):
         self._cursor_lines = []
         self._cursor_x_values = []
         self._update_inspection_label()
-        self.canvas.draw_idle()
-
-    def _ensure_crosshair(self, axis):
-        if axis is None:
-            return False
-        if self._crosshair_axis is axis and self._crosshair_vline is not None:
-            return True
-
-        self._clear_crosshair_artists()
-        self._crosshair_axis = axis
-        self._crosshair_vline = axis.axvline(0, color='gray', linestyle='--', linewidth=0.8, alpha=0.8, zorder=90)
-        self._crosshair_hline = axis.axhline(0, color='gray', linestyle='--', linewidth=0.8, alpha=0.8, zorder=90)
-        self._crosshair_annot = axis.annotate(
-            "",
-            xy=(0, 0),
-            xytext=(10, 10),
-            textcoords='offset points',
-            bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.8),
-            fontsize=9,
-            zorder=95,
-        )
-        return True
-
-    def _nearest_point(self, event):
-        if not self._inspect_series:
-            return None
-
-        best = None
-        for series in self._inspect_series:
-            x_vals = series.get('x')
-            y_vals = series.get('y')
-            axis = series.get('axis')
-            label = series.get('label')
-            if x_vals is None or y_vals is None or len(x_vals) == 0:
-                continue
-
-            pts = np.column_stack((x_vals, y_vals))
-            disp = axis.transData.transform(pts)
-            d2 = (disp[:, 0] - event.x) ** 2 + (disp[:, 1] - event.y) ** 2
-            idx = int(np.argmin(d2))
-            candidate = {
-                'distance2': float(d2[idx]),
-                'x': float(x_vals[idx]),
-                'y': float(y_vals[idx]),
-                'label': label,
-                'axis': axis,
-            }
-            if best is None or candidate['distance2'] < best['distance2']:
-                best = candidate
-
-        # Pixel threshold to avoid snapping to distant points.
-        if best is None or best['distance2'] > (20 ** 2):
-            return None
-        return best
-
-    def on_mouse_move(self, event):
-        if not self.coordinate_picker_enabled:
-            return
-        if event.inaxes not in [self.ax, getattr(self, 'ax2', None)]:
-            self._hide_crosshair()
-            return
-
-        nearest = self._nearest_point(event)
-        if nearest is None:
-            self._hide_crosshair()
-            return
-
-        axis = nearest['axis']
-        if not self._ensure_crosshair(axis):
-            return
-
-        x_val = nearest['x']
-        y_val = nearest['y']
-        label = nearest['label']
-
-        self._crosshair_vline.set_xdata([x_val, x_val])
-        self._crosshair_hline.set_ydata([y_val, y_val])
-        self._crosshair_vline.set_visible(True)
-        self._crosshair_hline.set_visible(True)
-
-        self._crosshair_annot.xy = (x_val, y_val)
-        self._crosshair_annot.set_text(f"{label}\nX={x_val:.6g}, Y={y_val:.6g}")
-        self._crosshair_annot.set_visible(True)
-
         self.canvas.draw_idle()
 
     def on_mouse_click(self, event):
@@ -275,6 +281,7 @@ class PlotWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Clean up references when the plot window is closed."""
+        self._remove_picker_cursors()
         if self.parent_window and hasattr(self.parent_window, 'plot_windows'):
             try:
                 self.parent_window.plot_windows.remove(self)
@@ -298,9 +305,9 @@ class PlotWindow(QMainWindow):
         return 1
 
     def draw_plot(self):
+        self._remove_picker_cursors()
         self.ax.clear()
         self._inspect_series = []
-        self._clear_crosshair_artists()
         self.clear_vertical_cursors()
         # Check if secondary axis is needed
         if hasattr(self, 'ax2'):
@@ -409,6 +416,8 @@ class PlotWindow(QMainWindow):
         plot_title = f"Plot: {', '.join(self.y_cols[:3])} vs {self.x_col}"
         self.ax.set_title(plot_title)
         self.ax.grid(True, linestyle="--", alpha=0.6)
+
+        self._rebuild_picker_cursor()
         
         # Force refresh and recalculate layout
         self.fig.canvas.draw_idle() 
