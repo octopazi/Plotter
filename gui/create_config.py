@@ -38,19 +38,29 @@ class CreateImportFormatDialog(QDialog):
         self._build_tab_file_format()
         self._build_tab_columns()
         self._build_tab_conversions()
+        self._build_tab_plot_config()
 
-        # ── Save Button ────────────────────────────────────
+        # ── Save / Close Buttons ───────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
         save_btn = QPushButton("Save")
+        close_btn = QPushButton("Close")
         save_btn.clicked.connect(self.save_config)
-        root_layout.addWidget(save_btn)
+        close_btn.clicked.connect(self.close)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(close_btn)
+        root_layout.addLayout(btn_row)
 
         # Internal storage
         self.y_columns = []
         self.conversions = []
+        self.plot_figures = []
         self._y_editing_row = None
         self._conv_editing_row = None
         self.column_names_from_header = False
         self.x_source_name = ""
+        self._plot_editing_row = None
+        self._saved_state = self._collect_config_state()
 
     # ==============================================================
     #  TAB 1 — File Format  (Header + Data settings)
@@ -451,6 +461,72 @@ class CreateImportFormatDialog(QDialog):
         self.tabs.addTab(page, "Conversions")
 
     # ==============================================================
+    #  TAB 4 — Plot Config  (Auto plot after import)
+    # ==============================================================
+    def _build_tab_plot_config(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        box_auto = QGroupBox("Auto Plot")
+        la = QVBoxLayout()
+        self.plot_auto_enabled = QCheckBox("Enable auto plot after import")
+        self.plot_auto_enabled.setToolTip(
+            "If enabled, the app creates plots immediately after importing datalog files using this config."
+        )
+        la.addWidget(self.plot_auto_enabled)
+
+        warn_label = QLabel(
+            "Warning: Auto plot runs for every imported file.\n"
+            "Large multi-file imports can open many plot windows."
+        )
+        warn_label.setWordWrap(True)
+        warn_label.setStyleSheet("color: #b35a00;")
+        la.addWidget(warn_label)
+        box_auto.setLayout(la)
+        layout.addWidget(box_auto)
+
+        box_fig = QGroupBox("Figure Definitions")
+        lf = QVBoxLayout()
+
+        figure_form = QFormLayout()
+        self.plot_title_edit = QLineEdit()
+        self.plot_title_edit.setPlaceholderText("Optional title")
+        self.plot_type_combo = QComboBox()
+        self.plot_type_combo.addItems(["scatter", "line_scatter"])
+        self.plot_x_edit = QLineEdit()
+        self.plot_x_edit.setPlaceholderText("X column name")
+        self.plot_y_edit = QLineEdit()
+        self.plot_y_edit.setPlaceholderText("Y columns (comma separated)")
+
+        figure_form.addRow("Title:", self.plot_title_edit)
+        figure_form.addRow("Type:", self.plot_type_combo)
+        figure_form.addRow("X Column:", self.plot_x_edit)
+        figure_form.addRow("Y Columns:", self.plot_y_edit)
+        lf.addLayout(figure_form)
+
+        figure_btn_row = QHBoxLayout()
+        self.btn_add_plot_figure = QPushButton("Add Figure")
+        self.btn_add_plot_figure.clicked.connect(self.add_plot_figure)
+        self.btn_cancel_plot_figure = QPushButton("Cancel")
+        self.btn_cancel_plot_figure.setVisible(False)
+        self.btn_cancel_plot_figure.clicked.connect(self._cancel_edit_plot_figure)
+        btn_del_figure = QPushButton("Delete Selected")
+        btn_del_figure.clicked.connect(self.delete_plot_figure)
+        figure_btn_row.addWidget(self.btn_add_plot_figure)
+        figure_btn_row.addWidget(self.btn_cancel_plot_figure)
+        figure_btn_row.addWidget(btn_del_figure)
+        figure_btn_row.addStretch()
+        lf.addLayout(figure_btn_row)
+
+        self.plot_figure_list = QListWidget()
+        self.plot_figure_list.itemDoubleClicked.connect(self._start_edit_plot_figure)
+        lf.addWidget(self.plot_figure_list)
+        box_fig.setLayout(lf)
+        layout.addWidget(box_fig)
+
+        self.tabs.addTab(page, "Plot Config")
+
+    # ==============================================================
     #  Dynamic Field Builder — reads CONV_FIELD_SPECS at runtime
     # ==============================================================
     def _rebuild_conv_fields(self, conv_type):
@@ -831,16 +907,101 @@ class CreateImportFormatDialog(QDialog):
             item.setText(f"[{i + 1}] {text}")
 
     # ==============================================================
-    #  Save
+    #  Plot Config Helpers
     # ==============================================================
-    def save_config(self):
-        name = self.name_edit.text().strip()
-        if not name:
-            QMessageBox.warning(self, "Error", "Format Name cannot be empty.")
+    def _parse_y_columns(self, y_text):
+        return [col.strip() for col in y_text.split(",") if col.strip()]
+
+    def _plot_figure_summary(self, figure):
+        fig_title = figure.get("title", "").strip()
+        title_text = fig_title if fig_title else "(untitled)"
+        y_text = ", ".join(figure.get("y_columns", []))
+        return (
+            f"{title_text} | {figure.get('plot_type', 'scatter')} | "
+            f"x={figure.get('x_column', '')} | y={y_text}"
+        )
+
+    def _start_edit_plot_figure(self, item):
+        row = self.plot_figure_list.row(item)
+        if row < 0 or row >= len(self.plot_figures):
             return
 
-        config = {
-            "name": name,
+        figure = self.plot_figures[row]
+        self.plot_title_edit.setText(str(figure.get("title", "")))
+        self.plot_type_combo.setCurrentText(str(figure.get("plot_type", "scatter")))
+        self.plot_x_edit.setText(str(figure.get("x_column", "")))
+        self.plot_y_edit.setText(", ".join(figure.get("y_columns", [])))
+
+        self._plot_editing_row = row
+        self.btn_add_plot_figure.setText("Update Figure")
+        self.btn_cancel_plot_figure.setVisible(True)
+
+    def _cancel_edit_plot_figure(self):
+        self._plot_editing_row = None
+        self.plot_title_edit.clear()
+        self.plot_type_combo.setCurrentText("scatter")
+        self.plot_x_edit.clear()
+        self.plot_y_edit.clear()
+        self.btn_add_plot_figure.setText("Add Figure")
+        self.btn_cancel_plot_figure.setVisible(False)
+
+    def _build_plot_figure_from_form(self):
+        x_column = self.plot_x_edit.text().strip()
+        y_columns = self._parse_y_columns(self.plot_y_edit.text().strip())
+        if not x_column:
+            QMessageBox.warning(self, "Error", "Plot figure X column cannot be empty.")
+            return None
+        if not y_columns:
+            QMessageBox.warning(self, "Error", "Plot figure must include at least one Y column.")
+            return None
+
+        return {
+            "title": self.plot_title_edit.text().strip(),
+            "plot_type": self.plot_type_combo.currentText(),
+            "x_column": x_column,
+            "y_columns": y_columns,
+        }
+
+    def add_plot_figure(self):
+        figure = self._build_plot_figure_from_form()
+        if figure is None:
+            return
+
+        if self._plot_editing_row is None:
+            self.plot_figures.append(figure)
+            self.plot_figure_list.addItem(self._plot_figure_summary(figure))
+            self._cancel_edit_plot_figure()
+            return
+
+        row = self._plot_editing_row
+        if row < 0 or row >= len(self.plot_figures):
+            QMessageBox.warning(self, "Error", "Selected plot figure is out of range.")
+            self._cancel_edit_plot_figure()
+            return
+
+        self.plot_figures[row] = figure
+        item = self.plot_figure_list.item(row)
+        if item is not None:
+            item.setText(self._plot_figure_summary(figure))
+        self._cancel_edit_plot_figure()
+
+    def delete_plot_figure(self):
+        selected = self.plot_figure_list.currentRow()
+        if selected >= 0:
+            if self._plot_editing_row is not None:
+                if self._plot_editing_row == selected:
+                    self._cancel_edit_plot_figure()
+                elif self._plot_editing_row > selected:
+                    self._plot_editing_row -= 1
+            self.plot_figure_list.takeItem(selected)
+            self.plot_figures.pop(selected)
+            return
+        QMessageBox.warning(self, "Error", "No plot figure selected.")
+
+    def _collect_config_state(self):
+        """Build a normalized state payload for save and dirty-state checks."""
+        return {
+            "name": self.name_edit.text().strip(),
             "header": {
                 **self._build_header_config(),
                 "column_names_from_header": self.column_names_from_header,
@@ -853,11 +1014,49 @@ class CreateImportFormatDialog(QDialog):
                         "index": self.x_index.value(),
                         "source_name": self.x_source_name,
                     },
-                    "y": self.y_columns,
+                    "y": list(self.y_columns),
                 },
             },
-            "conversions": self.conversions,
+            "conversions": list(self.conversions),
+            "plot_config": {
+                "enabled": self.plot_auto_enabled.isChecked(),
+                "figures": list(self.plot_figures),
+            },
         }
+
+    def _mark_saved(self):
+        self._saved_state = self._collect_config_state()
+
+    def _has_unsaved_changes(self):
+        return self._collect_config_state() != self._saved_state
+
+    def closeEvent(self, event):
+        if not self._has_unsaved_changes():
+            event.accept()
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Unsaved Changes",
+            "You have unsaved changes. Close without saving?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
+
+    # ==============================================================
+    #  Save
+    # ==============================================================
+    def save_config(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Error", "Format Name cannot be empty.")
+            return
+
+        config = self._collect_config_state()
 
         config_dir = os.path.join(os.getcwd(), "Config")
         os.makedirs(config_dir, exist_ok=True)
@@ -868,7 +1067,6 @@ class CreateImportFormatDialog(QDialog):
             current_path is not None
             and os.path.abspath(current_path) == os.path.abspath(save_path)
         )
-
         if os.path.exists(save_path) and not is_same_file:
             reply = QMessageBox.question(
                 self,
@@ -883,8 +1081,9 @@ class CreateImportFormatDialog(QDialog):
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=4)
 
+        self.config_path = save_path
+        self._mark_saved()
         QMessageBox.information(self, "Saved", f"Saved to: {save_path}")
-        self.accept()
 
 
 # ==================================================================
@@ -977,6 +1176,32 @@ class EditImportFormatDialog(CreateImportFormatDialog):
             self.conv_list.addItem(
                 f"[{step_idx}] {c.get('name', '')}  ←  {summary}"
             )
+
+        # 6. Plot config
+        plot_cfg = config.get("plot_config", {})
+        self.plot_auto_enabled.setChecked(bool(plot_cfg.get("enabled", False)))
+        self.plot_figures = []
+        self.plot_figure_list.clear()
+        for figure in plot_cfg.get("figures", []):
+            raw_y_columns = figure.get("y_columns", [])
+            if isinstance(raw_y_columns, str):
+                y_columns = [col.strip() for col in raw_y_columns.split(",") if col.strip()]
+            elif isinstance(raw_y_columns, list):
+                y_columns = [str(col).strip() for col in raw_y_columns if str(col).strip()]
+            else:
+                y_columns = []
+
+            normalized_figure = {
+                "title": str(figure.get("title", "")).strip(),
+                "plot_type": str(figure.get("plot_type", "scatter")),
+                "x_column": str(figure.get("x_column", "")).strip(),
+                "y_columns": y_columns,
+            }
+            self.plot_figures.append(normalized_figure)
+            self.plot_figure_list.addItem(self._plot_figure_summary(normalized_figure))
+        self._cancel_edit_plot_figure()
+
+        self._mark_saved()
 
     def save_config(self):
         new_name = self.name_edit.text().strip()
