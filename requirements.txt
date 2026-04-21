@@ -1,0 +1,5 @@
+PyQt5==5.15.11
+matplotlib==3.10.8
+numpy==2.4.4
+pandas==3.0.2
+mplcursors==0.7.1

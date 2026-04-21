@@ -3,7 +3,7 @@
 
 A desktop GUI tool for importing, converting, analyzing, and plotting data from raw CSV or text files. Designed for flexibility, extensibility, and ease of use in scientific and engineering workflows.
 
-**Version:** 0.1.0-alpha
+**Version:** 0.2.0-alpha
 
 ---
 
@@ -59,7 +59,7 @@ This is an **alpha release** for early user feedback. Features and UI may change
 
 1. **Install Dependencies:**
    ```powershell
-   pip install -r requirement.txt
+  pip install -r requirements.txt
    ```
 2. **Run the Application:**
    ```powershell
@@ -77,11 +77,71 @@ This is an **alpha release** for early user feedback. Features and UI may change
 
 ---
 
+## Build & Release Workflow
+
+### Version Naming Rules
+
+- This project currently enforces prerelease format: `MAJOR.MINOR.PATCH-alpha`
+- Valid example: `0.2.0-alpha`
+- Invalid examples: `0.2-alpha`, `v0.2.0-alpha`, `0.2.0-alpha.1` (not used in this project policy)
+- The only source of truth is `__version__` in `main.py`
+- Git tags must be prefixed with `v`, so release tag for this version is `v0.2.0-alpha`
+
+### Local Release (Windows PowerShell)
+
+Run this from project root:
+
+```powershell
+./scripts/release.ps1
+```
+
+What this script does:
+
+1. Validates version naming and consistency with `CHANGELOG.md` and `RELEASE_NOTES.md`
+2. Cleans previous build output (`build/` and `dist/`)
+3. Installs dependencies and PyInstaller
+4. Builds with `main.spec`
+5. Creates versioned outputs in `dist/Plotter-<version>/` plus `dist/Plotter-<version>.zip`
+
+### GitHub Actions Release (Beginner Guide)
+
+The workflow file is `.github/workflows/release.yml`.
+
+How it works:
+
+1. Trigger: push a git tag like `v0.2.0-alpha`
+2. CI installs Python + dependencies
+3. CI validates that tag version matches `main.py` version
+4. CI builds PyInstaller bundle and zips it
+5. CI creates a GitHub prerelease and uploads the ZIP artifact
+
+One-time repository setup:
+
+1. Open GitHub repository settings
+2. Ensure Actions are enabled
+3. Ensure workflow has permission to write repository contents (for creating releases)
+
+Release commands:
+
+```bash
+git add .
+git commit -m "release: v0.2.0-alpha"
+git push origin main
+git tag v0.2.0-alpha
+git push origin v0.2.0-alpha
+```
+
+After pushing the tag, open the Actions tab and watch the `Build and Release` workflow.
+
+---
+
 ## Project Structure
 
 ```
 main.py                  # Entry point
-requirement.txt          # Python dependencies
+requirements.txt         # Python dependencies (UTF-8 for CI)
+scripts/release.ps1      # Local release automation
+scripts/validate_version.py # Version rule validator
 Config/                  # User and sample config files
 Sample/                  # Example data and config templates
 gui/                     # PyQt5 GUI dialogs and main window

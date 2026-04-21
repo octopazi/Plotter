@@ -1,5 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+import pathlib
+import re
+
+
+def _read_app_version():
+    main_py = pathlib.Path("main.py").resolve()
+    if not main_py.exists():
+        raise ValueError("Could not locate main.py while reading app version")
+    text = main_py.read_text(encoding="utf-8")
+    m = re.search(r'^__version__\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not m:
+        raise ValueError("Could not find __version__ in main.py")
+    return m.group(1)
+
+
+APP_VERSION = os.environ.get("PLOTTER_VERSION", _read_app_version())
+DIST_NAME = f"Plotter-{APP_VERSION}"
+
 
 a = Analysis(
     ['main.py'],
@@ -7,6 +26,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('full_config_reference.json', 'Config'),
+        ('CHANGELOG.md', '.'),
+        ('RELEASE_NOTES.md', '.'),
     ],
     hiddenimports=[],
     hookspath=[],
@@ -42,5 +63,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Plotter',
+    name=DIST_NAME,
 )
