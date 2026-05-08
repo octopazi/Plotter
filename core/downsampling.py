@@ -267,7 +267,7 @@ def _apply_decimation(df, x_col_name, params):
 
     # Signal columns: scipy decimate (anti-alias + downsample)
     for col in sig_cols:
-        raw = df[col].to_numpy(dtype=float)
+        raw = df[col].to_numpy(dtype=float).copy()
         try:
             decimated = scipy_decimate(raw, factor, zero_phase=zero_phase)
         except Exception as exc:
@@ -317,7 +317,7 @@ def _apply_lttb(df, x_col_name, params):
     # Collect selected indices from each signal, then take the union
     selected_indices_set = set()
     for col in sig_cols:
-        y_arr = df[col].to_numpy(dtype=float)
+        y_arr = df[col].to_numpy(dtype=float).copy()
         try:
             indices = downsampler.downsample(x_arr, y_arr, n_out=n_samples)
         except Exception as exc:
@@ -387,7 +387,7 @@ def _apply_dwt(df, x_col_name, params):
     result = {}
 
     for col in sig_cols:
-        raw = df[col].to_numpy(dtype=float)
+        raw = df[col].to_numpy(dtype=float).copy()
         try:
             coeffs = pywt.wavedec(raw, wavelet, level=level)
         except Exception as exc:
@@ -427,7 +427,8 @@ def _apply_dwt(df, x_col_name, params):
             indices = np.round(np.linspace(0, len(df) - 1, out_len)).astype(int)
             result[col] = df[col].to_numpy()[indices]
 
-    return pd.DataFrame(result)
+    # Preserve original column order from input DataFrame
+    return pd.DataFrame(result)[list(df.columns)]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
