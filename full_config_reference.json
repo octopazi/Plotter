@@ -237,5 +237,64 @@
       "offset": 0.0
     }
 
-  ]
+  ],
+
+  "_downsampling_doc": "──────────────────────────────────────────────────────────────────────────────",
+  "_downsampling_doc2": "SECTION: downsampling  (optional top-level key)",
+  "_downsampling_doc3": "Reduces the number of rows in the imported dataset at import time.",
+  "_downsampling_doc4": "The imported dataframe is replaced with the downsampled result.",
+  "_downsampling_doc5": "Dataset name in the UI becomes:  <filename>_downsampled_<method>",
+  "_downsampling_doc6": "──────────────────────────────────────────────────────────────────────────────",
+
+  "downsampling": {
+    "_doc_enabled":  "Set to true to activate downsampling on every import using this config.",
+    "enabled": false,
+
+    "_doc_method":   "Which algorithm to use: 'decimation', 'lttb', or 'dwt'.",
+    "method": "lttb",
+
+    "_doc_timing":   "When to apply downsampling in the import pipeline.",
+    "_doc_timing2":  "  'before_conversions' (default) — downsample raw data first, then run",
+    "_doc_timing3":  "       conversion formulas on fewer rows (faster for large files).",
+    "_doc_timing4":  "  'after_conversions'  — run all conversions first, then downsample so",
+    "_doc_timing5":  "       all derived columns are included in the reduced dataset.",
+    "timing": "before_conversions",
+
+    "_doc_decimation": "──────────────────────────────────────────────────────────",
+    "_doc_decimation2": "METHOD: decimation  (requires scipy)",
+    "_doc_decimation3": "Anti-alias lowpass filter + integer-factor stride reduction.",
+    "_doc_decimation4": "Requires UNIFORM sampling on the x-axis.",
+    "_doc_decimation5": "Effective sample rate becomes:  original_hz / factor",
+    "decimation": {
+      "_doc_factor":     "Integer decimation factor (>= 2). Keeps every Nth sample.",
+      "factor": 10,
+      "_doc_zero_phase": "Use zero-phase (forward-backward) IIR filter (default true).",
+      "zero_phase": true
+    },
+
+    "_doc_lttb":  "──────────────────────────────────────────────────────────",
+    "_doc_lttb2": "METHOD: lttb  (requires tsdownsample)",
+    "_doc_lttb3": "Largest-Triangle-Three-Buckets — visually faithful thinning.",
+    "_doc_lttb4": "Tolerates non-uniform x spacing; only requires monotonic x-axis.",
+    "_doc_lttb5": "Best choice for plot-quality reduction without signal analysis.",
+    "lttb": {
+      "_doc_n_samples": "Target number of output samples (>= 2).",
+      "n_samples": 5000
+    },
+
+    "_doc_dwt":  "──────────────────────────────────────────────────────────",
+    "_doc_dwt2": "METHOD: dwt  (requires PyWavelets)",
+    "_doc_dwt3": "Discrete Wavelet Transform approximation — analysis-oriented lossy transform.",
+    "_doc_dwt4": "Requires UNIFORM sampling on the x-axis.",
+    "_doc_dwt5": "Output length with reconstruct=false: N / 2^level.  With reconstruct=true: N (smoothed).",
+    "dwt": {
+      "_doc_wavelet":     "PyWavelets wavelet name (e.g. 'db4', 'haar', 'sym8'). Call pywt.wavelist() for all options.",
+      "wavelet": "db4",
+      "_doc_level":       "Decomposition level (>= 1). Higher = more aggressive reduction.",
+      "level": 3,
+      "_doc_reconstruct": "true: reconstruct signal back to original length (smoothed, same N).",
+      "_doc_reconstruct2":"false: keep approximation coefficients only (shorter output, N/2^level).",
+      "reconstruct": false
+    }
+  }
 }

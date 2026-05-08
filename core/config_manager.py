@@ -1,5 +1,6 @@
 import os
 import json
+from .downsampling import validate_downsampling_config
 
 class ConfigManager:
     """Manages the configuration files for data import formats."""
@@ -100,6 +101,20 @@ class ConfigManager:
                 "figures": clean_figures,
             }
 
+        # Optional section: downsampling
+        ds_cfg = config.get("downsampling")
+        if not isinstance(ds_cfg, dict):
+            config["downsampling"] = {"enabled": False}
+        else:
+            # Coerce enabled
+            config["downsampling"]["enabled"] = bool(ds_cfg.get("enabled", False))
+            # Coerce timing default
+            timing = ds_cfg.get("timing", "before_conversions")
+            if timing not in ("before_conversions", "after_conversions"):
+                timing = "before_conversions"
+            config["downsampling"]["timing"] = timing
+            # Method is preserved as-is; full validation happens in validate_config
+
         return config
 
     @staticmethod
@@ -130,7 +145,13 @@ class ConfigManager:
 
                 if "y_columns" in fig and not isinstance(fig.get("y_columns"), list):
                     return False, f"Invalid figure #{idx} 'y_columns': expected array."
-        
+
+        # Optional section: downsampling
+        if "downsampling" in config_data:
+            ok, msg = validate_downsampling_config(config_data["downsampling"])
+            if not ok:
+                return False, msg
+
         # We can add more specific type/schema checks here later
         return True, "Valid configuration."
 

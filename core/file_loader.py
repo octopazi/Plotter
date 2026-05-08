@@ -3,6 +3,7 @@ import json
 import pandas as pd
 from .config_manager import ConfigManager
 from .conversion_handlers import apply_conversions
+from .downsampling import downsample, DownsamplingError
 from .header_detector import (
     extract_header_metadata,
     build_config_column_mismatch_warnings,
@@ -156,11 +157,34 @@ class FileLoader:
                     
         df.rename(columns=rename_map, inplace=True)
         
-        # 4. Apply Transformations / Conversions AFTER renaming
+        # Resolve x-axis column name (used by downsampling service)
+        x_col_name = x_def.get("name", "x") if x_type != "index" else x_def.get("name", "x")
+
+        # 4a. DOWNSAMPLING — before_conversions (default: faster for large files)
+        ds_config    = config.get("downsampling", {"enabled": False})
+        ds_timing    = ds_config.get("timing", "before_conversions")
+        downsample_result_meta = None
+        downsampling_error     = None
+
+        if ds_config.get("enabled", False) and ds_timing == "before_conversions":
+            try:
+                df, downsample_result_meta = downsample(df, ds_config, x_col_name)
+            except DownsamplingError as exc:
+                downsampling_error = str(exc)
+
+        # 4b. Apply Transformations / Conversions AFTER renaming
         # Conversions run sequentially — a later step can reference a column
         # produced by an earlier step.  Failures are collected and returned
         # to the caller rather than silently ignored.
         conversion_errors = apply_conversions(df, conversions)
+
+        # 4c. DOWNSAMPLING — after_conversions (all derived columns included)
+        if ds_config.get("enabled", False) and ds_timing == "after_conversions":
+            try:
+                df, downsample_result_meta = downsample(df, ds_config, x_col_name)
+            except DownsamplingError as exc:
+                downsampling_error = str(exc)
+
         column_mismatch_warnings = build_config_column_mismatch_warnings(
             data_config.get("columns", {}),
             original_cols,
@@ -172,4 +196,6 @@ class FileLoader:
             "dataframe": df,
             "conversion_errors": conversion_errors,
             "column_mismatch_warnings": column_mismatch_warnings,
+            "downsampling_meta": downsample_result_meta,
+            "downsampling_error": downsampling_error,
         }
