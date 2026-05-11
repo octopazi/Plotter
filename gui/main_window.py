@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(import_datalog_action)
 
         delete_dataset_action = QAction("Delete Dataset", self)
-        delete_dataset_action.triggered.connect(self.delete_selected_dataset)
+        delete_dataset_action.triggered.connect(self.open_delete_datasets_dialog)
         file_menu.addAction(delete_dataset_action)
 
         export_dataset_action = QAction("Export Dataset", self)
@@ -450,6 +450,58 @@ class MainWindow(QMainWindow):
         self.data_table_view.setModel(None)
 
         self.update_file_list_widget()
+
+    def open_delete_datasets_dialog(self):
+        """Open a multi-select dialog to delete one or more datasets."""
+        if not self.data_manager.datasets:
+            QMessageBox.warning(self, "No Data", "No datasets are loaded.")
+            return
+
+        from .delete_dataset_dialog import DeleteDatasetsDialog
+        dialog = DeleteDatasetsDialog(self.data_manager, parent=self)
+        if not dialog.exec_():
+            return
+
+        selected_ids = dialog.selected_dataset_ids()
+        if not selected_ids:
+            return
+
+        selected_names = []
+        for ds_id in selected_ids:
+            dataset = self.data_manager.get_dataset(ds_id)
+            if dataset:
+                selected_names.append(dataset.name)
+
+        preview_lines = [f"- {name}" for name in selected_names[:8]]
+        if len(selected_names) > 8:
+            preview_lines.append(f"- ... and {len(selected_names) - 8} more")
+
+        reply = QMessageBox.question(
+            self,
+            "Confirm Delete",
+            "Are you sure you want to delete the selected datasets from memory?\n"
+            "This action cannot be undone.\n\n"
+            + "\n".join(preview_lines),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        removed_count = 0
+        for ds_id in selected_ids:
+            if self.data_manager.remove_dataset(ds_id):
+                removed_count += 1
+
+        self.update_file_list_widget()
+
+        if self.file_list_widget.count() > 0:
+            self.file_list_widget.setCurrentRow(0)
+        else:
+            self.table_model = None
+            self.data_table_view.setModel(None)
+
+        QMessageBox.information(self, "Datasets Deleted", f"Deleted {removed_count} dataset(s).")
 
     def open_export_dialog(self):
         """Open the Export Dataset dialog."""
