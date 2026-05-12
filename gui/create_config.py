@@ -11,6 +11,7 @@ from PyQt5.QtCore import Qt
 
 from core.conversion_handlers import CONV_FIELD_SPECS, conv_summary
 from core.header_detector import detect_columns_from_file
+from core.downsampling import PACKAGE_REQUIREMENTS as DS_PACKAGE_REQUIREMENTS
 from .column_detection_dialog import ColumnDetectionDialog
 
 
@@ -40,6 +41,7 @@ class CreateImportFormatDialog(QDialog):
         self._build_tab_columns()
         self._build_tab_conversions()
         self._build_tab_plot_config()
+        self._build_tab_downsampling()
 
         # ── Save / Close Buttons ───────────────────────────
         btn_row = QHBoxLayout()
@@ -560,7 +562,197 @@ class CreateImportFormatDialog(QDialog):
         self.tabs.addTab(page, "Plot Config")
 
     # ==============================================================
+    #  TAB 5 — Downsampling
+    # ==============================================================
+    def _build_tab_downsampling(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setAlignment(Qt.AlignTop)
+
+        # ── Enable checkbox ────────────────────────────────
+        self.ds_enable_cb = QCheckBox("Enable downsampling on import")
+        self.ds_enable_cb.setToolTip(
+            "When enabled, imported data is thinned using the selected algorithm "
+            "before (or after) conversion formulas run.\n"
+            "The dataset name will become  <filename>_downsampled_<method>."
+        )
+        layout.addWidget(self.ds_enable_cb)
+
+        # ── Controls group ────────────────────────────────
+        self.ds_controls_group = QGroupBox("Downsampling Settings")
+        gl = QFormLayout()
+
+        # Method combo – append "(not installed)" badge where needed
+        self.ds_method_combo = QComboBox()
+        _method_keys = ["decimation", "lttb", "dwt"]
+        _method_labels = {
+            "decimation": "Decimation (scipy.signal.decimate)",
+            "lttb":       "LTTB - Largest Triangle Three Buckets (tsdownsample)",
+            "dwt":        "DWT - Discrete Wavelet Transform (PyWavelets)",
+        }
+        for key in _method_keys:
+            label = _method_labels[key]
+            available = DS_PACKAGE_REQUIREMENTS[key][1]
+            if not available:
+                label += " (package not installed)"
+            self.ds_method_combo.addItem(label, userData=key)
+        gl.addRow("Algorithm:", self.ds_method_combo)
+
+        # Timing combo
+        self.ds_timing_combo = QComboBox()
+        self.ds_timing_combo.addItem(
+            "Before conversions (default - faster for large files)",
+            userData="before_conversions",
+        )
+        self.ds_timing_combo.addItem(
+            "After conversions (all derived columns included)",
+            userData="after_conversions",
+        )
+        self.ds_timing_combo.setToolTip(
+            "Before conversions: downsampling runs on raw columns first, then formulas\n"
+            "evaluate on fewer rows - best for large files.\n\n"
+            "After conversions: all derived columns exist before thinning - use when\n"
+            "conversion outputs must be included in the downsampled result."
+        )
+        gl.addRow("Apply timing:", self.ds_timing_combo)
+
+        self.ds_controls_group.setLayout(gl)
+        layout.addWidget(self.ds_controls_group)
+
+        # ── Parameter pages (QStackedWidget, one per method) ──
+        params_label = QLabel("Method Parameters:")
+        layout.addWidget(params_label)
+        self.ds_stacked = QStackedWidget()
+
+        # Page 0 – Decimation
+        dec_page = QWidget()
+        dec_form = QFormLayout(dec_page)
+        self.ds_dec_factor = QSpinBox()
+        self.ds_dec_factor.setRange(2, 10000)
+        self.ds_dec_factor.setValue(10)
+        self.ds_dec_factor.setToolTip(
+            "Keep every Nth sample after anti-alias filtering.\n"
+            "Example: factor=10 reduces 10 000 rows to 1 000 rows."
+        )
+        self.ds_dec_zero_phase = QCheckBox("Zero-phase filter (recommended)")
+        self.ds_dec_zero_phase.setChecked(True)
+        self.ds_dec_zero_phase.setToolTip(
+            "Uses a forward-backward IIR filter that avoids phase distortion.\n"
+            "Uncheck only if causal (one-pass) filtering is required."
+        )
+        dec_form.addRow("Factor:", self.ds_dec_factor)
+        dec_form.addRow("", self.ds_dec_zero_phase)
+        dec_note = QLabel(
+            "Requires uniform x-axis spacing.\n"
+            "Effective sample rate = original Hz / factor."
+        )
+        dec_note.setStyleSheet("color: #b35a00;")
+        dec_note.setWordWrap(True)
+        dec_form.addRow(dec_note)
+        self.ds_stacked.addWidget(dec_page)
+
+        # Page 1 – LTTB
+        lttb_page = QWidget()
+        lttb_form = QFormLayout(lttb_page)
+        self.ds_lttb_n = QSpinBox()
+        self.ds_lttb_n.setRange(2, 10_000_000)
+        self.ds_lttb_n.setValue(5000)
+        self.ds_lttb_n.setToolTip(
+            "Target number of output samples.\n"
+            "LTTB preserves the visual shape of the signal.\n"
+            "First and last samples are always kept."
+        )
+        lttb_form.addRow("Target samples:", self.ds_lttb_n)
+        lttb_note = QLabel("Works with non-uniform x-axis spacing.")
+        lttb_note.setStyleSheet("color: #0a7a0a;")
+        lttb_form.addRow(lttb_note)
+        self.ds_stacked.addWidget(lttb_page)
+
+        # Page 2 – DWT
+        dwt_page = QWidget()
+        dwt_form = QFormLayout(dwt_page)
+        self.ds_dwt_wavelet = QLineEdit("db4")
+        self.ds_dwt_wavelet.setToolTip(
+            "PyWavelets wavelet name, e.g. db4, haar, sym8, coif2.\n"
+            "Run pywt.wavelist() in Python to see all available names."
+        )
+        self.ds_dwt_level = QSpinBox()
+        self.ds_dwt_level.setRange(1, 20)
+        self.ds_dwt_level.setValue(3)
+        self.ds_dwt_level.setToolTip(
+            "Decomposition level. Higher = more aggressive reduction.\n"
+            "Maximum level depends on signal length and wavelet."
+        )
+        self.ds_dwt_reconstruct = QCheckBox("Reconstruct to original length (smoothed)")
+        self.ds_dwt_reconstruct.setChecked(False)
+        self.ds_dwt_reconstruct.setToolTip(
+            "Checked: output has the same number of rows as input, but smoothed.\n"
+            "Unchecked: output is shorter - N / 2^level rows (approximation coefficients)."
+        )
+        dwt_form.addRow("Wavelet:", self.ds_dwt_wavelet)
+        dwt_form.addRow("Level:", self.ds_dwt_level)
+        dwt_form.addRow("", self.ds_dwt_reconstruct)
+        dwt_note = QLabel("Requires uniform x-axis spacing.")
+        dwt_note.setStyleSheet("color: #b35a00;")
+        dwt_form.addRow(dwt_note)
+        self.ds_stacked.addWidget(dwt_page)
+
+        layout.addWidget(self.ds_stacked)
+        layout.addStretch()
+        self.tabs.addTab(page, "Downsampling")
+
+        # ── Wire signals ──────────────────────────────────
+        self.ds_enable_cb.stateChanged.connect(self._toggle_ds_controls)
+        self.ds_method_combo.currentIndexChanged.connect(self._on_ds_method_changed)
+
+        # Set initial state
+        self._toggle_ds_controls()
+
+    def _toggle_ds_controls(self):
+        """Enable/disable all downsampling controls based on the enable checkbox."""
+        enabled = self.ds_enable_cb.isChecked()
+        self.ds_controls_group.setEnabled(enabled)
+        self.ds_stacked.setEnabled(enabled)
+
+    def _on_ds_method_changed(self, index):
+        """Switch the parameter page to match the selected method."""
+        self.ds_stacked.setCurrentIndex(index)
+
+    def _collect_downsampling_config(self):
+        """Read all downsampling tab widgets and return the config dict."""
+        enabled = self.ds_enable_cb.isChecked()
+        method_idx = self.ds_method_combo.currentIndex()
+        method_key = self.ds_method_combo.itemData(method_idx) or "lttb"
+        timing_key = self.ds_timing_combo.itemData(self.ds_timing_combo.currentIndex()) \
+                     or "before_conversions"
+
+        cfg = {
+            "enabled": enabled,
+            "method": method_key,
+            "timing": timing_key,
+        }
+
+        # Only include the active method's parameters
+        if method_key == "decimation":
+            cfg["decimation"] = {
+                "factor": self.ds_dec_factor.value(),
+                "zero_phase": self.ds_dec_zero_phase.isChecked(),
+            }
+        elif method_key == "lttb":
+            cfg["lttb"] = {
+                "n_samples": self.ds_lttb_n.value(),
+            }
+        elif method_key == "dwt":
+            cfg["dwt"] = {
+                "wavelet": self.ds_dwt_wavelet.text().strip() or "db4",
+                "level": self.ds_dwt_level.value(),
+                "reconstruct": self.ds_dwt_reconstruct.isChecked(),
+            }
+        return cfg
+
+    # ==============================================================
     #  Dynamic Field Builder — reads CONV_FIELD_SPECS at runtime
+
     # ==============================================================
     def _rebuild_conv_fields(self, conv_type):
         """Tear down and rebuild the dynamic field form for *conv_type*."""
@@ -1055,6 +1247,7 @@ class CreateImportFormatDialog(QDialog):
                 "enabled": self.plot_auto_enabled.isChecked(),
                 "figures": list(self.plot_figures),
             },
+            "downsampling": self._collect_downsampling_config(),
         }
 
     def _mark_saved(self):
@@ -1235,6 +1428,38 @@ class EditImportFormatDialog(CreateImportFormatDialog):
             }
             self.plot_figures.append(normalized_figure)
             self.plot_figure_list.addItem(self._plot_figure_summary(normalized_figure))
+
+        # 7. Downsampling
+        ds = config.get("downsampling", {})
+        self.ds_enable_cb.setChecked(bool(ds.get("enabled", False)))
+
+        method = ds.get("method", "lttb")
+        method_keys = [self.ds_method_combo.itemData(i)
+                       for i in range(self.ds_method_combo.count())]
+        if method in method_keys:
+            self.ds_method_combo.setCurrentIndex(method_keys.index(method))
+
+        timing = ds.get("timing", "before_conversions")
+        timing_keys = [self.ds_timing_combo.itemData(i)
+                       for i in range(self.ds_timing_combo.count())]
+        if timing in timing_keys:
+            self.ds_timing_combo.setCurrentIndex(timing_keys.index(timing))
+
+        dec = ds.get("decimation", {})
+        self.ds_dec_factor.setValue(int(dec.get("factor", 10)))
+        self.ds_dec_zero_phase.setChecked(bool(dec.get("zero_phase", True)))
+
+        lttb = ds.get("lttb", {})
+        self.ds_lttb_n.setValue(int(lttb.get("n_samples", 5000)))
+
+        dwt = ds.get("dwt", {})
+        self.ds_dwt_wavelet.setText(str(dwt.get("wavelet", "db4")))
+        self.ds_dwt_level.setValue(int(dwt.get("level", 3)))
+        self.ds_dwt_reconstruct.setChecked(bool(dwt.get("reconstruct", False)))
+
+        self._toggle_ds_controls()
+        self._on_ds_method_changed(self.ds_method_combo.currentIndex())
+
         self._cancel_edit_plot_figure()
 
         self._mark_saved()

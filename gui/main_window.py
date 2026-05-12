@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
                 imported_dataset_ids = []
                 all_conversion_errors = []   # (filename, ConversionError) pairs
                 all_column_warnings = []     # (filename, warning_text) pairs
+                all_downsampling_errors = [] # (filename, error_str) pairs
                 
                 # Load each file and add to DataManager independently
                 for file_path in dialog.selected_files:
@@ -157,15 +158,31 @@ class MainWindow(QMainWindow):
                     
                     df = result['dataframe']
                     metadata = result['metadata']
-                    name = os.path.basename(file_path)
+                    base_name = os.path.basename(file_path)
 
                     # Collect conversion errors for this file
                     for err in result.get('conversion_errors', []):
-                        all_conversion_errors.append((name, err))
+                        all_conversion_errors.append((base_name, err))
                     for warn in result.get('column_mismatch_warnings', []):
-                        all_column_warnings.append((name, warn))
+                        all_column_warnings.append((base_name, warn))
+
+                    # Downsampling: apply naming convention and collect errors
+                    ds_err = result.get('downsampling_error')
+                    ds_meta = result.get('downsampling_meta')
+                    if ds_err:
+                        all_downsampling_errors.append((base_name, ds_err))
+
+                    if ds_meta and ds_meta.get('method'):
+                        method_tag = ds_meta['method']
+                        name = f"{os.path.splitext(base_name)[0]}_downsampled_{method_tag}"
+                        dataset_type = "downsampled"
+                        metadata = dict(metadata)
+                        metadata['downsampling'] = ds_meta
+                    else:
+                        name = base_name
+                        dataset_type = "raw"
                     
-                    ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type="raw")
+                    ds_id = self.data_manager.add_dataset(name, df, metadata, dataset_type=dataset_type)
                     imported_dataset_ids.append(ds_id)
                     added_count += 1
                 
@@ -197,6 +214,16 @@ class MainWindow(QMainWindow):
                         "Some file columns differ from names captured during detection.\n"
                         "Import continues, but verify X/Y mapping for correctness.\n\n"
                         + "\n".join(lines),
+                    )
+
+                if all_downsampling_errors:
+                    lines = [f"[{fn}]  {err}" for fn, err in all_downsampling_errors]
+                    QMessageBox.warning(
+                        self,
+                        "Downsampling Warnings",
+                        f"Downsampling failed for {len(all_downsampling_errors)} file(s).\n"
+                        "The files were imported without downsampling.\n\n"
+                        + "\n\n".join(lines),
                     )
                 
                 # Show summary
