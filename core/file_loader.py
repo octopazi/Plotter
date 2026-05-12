@@ -1,6 +1,7 @@
 import os
 import json
 import pandas as pd
+from pandas.errors import ParserError
 from .config_manager import ConfigManager
 from .conversion_handlers import apply_conversions
 from .downsampling import downsample, DownsamplingError
@@ -72,6 +73,8 @@ class FileLoader:
                                 
         # 2. Parse Data block
         data_sep = data_config.get("separator", ",")
+        if data_sep in (None, ""):
+            data_sep = ","
         data_ignore_prefix = data_config.get("ignore_prefix", None)
 
         has_col_names = bool(header_config.get("column_names_from_header", False))
@@ -99,17 +102,43 @@ class FileLoader:
         print(f"-------------------------")
 
         # Load the CSV
+        read_csv_kwargs = dict(
+            sep=data_sep,
+            skiprows=skip_total,
+            comment=data_ignore_prefix,
+            header=header_row,
+            nrows=nrows,
+            engine="python",
+            skipinitialspace=True,
+        )
+
         try:
             df = pd.read_csv(
                 file_path,
-                sep=data_sep,
-                skiprows=skip_total,
-                comment=data_ignore_prefix,
-                header=header_row,
-                nrows=nrows,
-                engine="python",
-                skipinitialspace=True
+                **read_csv_kwargs,
             )
+        except ParserError as e:
+            # pandas treats multi-char separators as regex in python engine,
+            # which can ignore CSV quoting rules. A common misconfiguration is
+            # using ", " instead of ",".
+            cleaned_sep = data_sep.strip() if isinstance(data_sep, str) else data_sep
+            can_retry_with_cleaned_sep = (
+                isinstance(data_sep, str)
+                and data_sep != cleaned_sep
+                and isinstance(cleaned_sep, str)
+                and len(cleaned_sep) == 1
+            )
+
+            if can_retry_with_cleaned_sep and "multi-char delimiter" in str(e):
+                print(
+                    f"Retrying read_csv with normalized separator: {repr(cleaned_sep)} "
+                    f"(from {repr(data_sep)})"
+                )
+                read_csv_kwargs["sep"] = cleaned_sep
+                df = pd.read_csv(file_path, **read_csv_kwargs)
+            else:
+                print(f"Pandas read_csv Exception: {type(e).__name__}: {str(e)}")
+                raise
         except Exception as e:
             print(f"Pandas read_csv Exception: {type(e).__name__}: {str(e)}")
             raise

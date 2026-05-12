@@ -54,7 +54,14 @@ class ConfigManager:
             if section in config:
                 # Sanitize separators
                 if "separator" in config[section]:
-                    config[section]["separator"] = clean_string(config[section]["separator"])
+                    sep = clean_string(config[section]["separator"])
+                    # Common user input like ", " should be normalized to ","
+                    # to avoid pandas treating it as a multi-char regex separator.
+                    if isinstance(sep, str):
+                        stripped_sep = sep.strip()
+                        if len(sep) > 1 and len(stripped_sep) == 1:
+                            sep = stripped_sep
+                    config[section]["separator"] = sep
 
                 if section == "header" and "simple_separator" in config[section]:
                     config[section]["simple_separator"] = clean_string(config[section]["simple_separator"])
