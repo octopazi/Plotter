@@ -163,7 +163,8 @@ class FFTDialog(QDialog):
             return
 
         # 5. Store result as a new 'fft' dataset in DataManager
-        result_name = f"{source_ds.name} — FFT"
+        cols_label = ", ".join(signal_cols)
+        result_name = f"{source_ds.name} — FFT [{cols_label}]"
         self.new_dataset_id = self.data_manager.add_dataset(
             name=result_name,
             dataframe=fft_df,
