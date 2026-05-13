@@ -158,36 +158,34 @@ def _extract_expert_mode_column_names(file_path, header_config):
         if prefix and not candidate.startswith(prefix):
             continue
 
-        found = pattern.search(candidate)
-        if not found:
-            continue
-
-        try:
-            name = str(found.group(name_group)).strip()
-        except IndexError:
-            raise ValueError(
-                f"expert_name_group={name_group} does not exist in the regex capture groups."
-            )
-
-        if not name:
-            continue
-
-        idx_value = None
-        if index_group is not None:
+        # CHANGED: Use finditer to catch multiple matches per line
+        for found in pattern.finditer(candidate):
             try:
-                idx_text = found.group(index_group)
+                name = str(found.group(name_group)).strip()
             except IndexError:
                 raise ValueError(
-                    f"expert_index_group={index_group} does not exist in the regex capture groups."
+                    f"expert_name_group={name_group} does not exist in the regex capture groups."
                 )
-            if idx_text is not None and str(idx_text).strip() != "":
-                try:
-                    idx_value = int(str(idx_text).strip())
-                except ValueError:
-                    idx_value = None
 
-        matched.append((idx_value if idx_value is not None else seq, seq, name))
-        seq += 1
+            if not name:
+                continue
+
+            idx_value = None
+            if index_group is not None:
+                try:
+                    idx_text = found.group(index_group)
+                except IndexError:
+                    raise ValueError(
+                        f"expert_index_group={index_group} does not exist in the regex capture groups."
+                    )
+                if idx_text is not None and str(idx_text).strip() != "":
+                    try:
+                        idx_value = int(str(idx_text).strip())
+                    except ValueError:
+                        idx_value = None
+
+            matched.append((idx_value if idx_value is not None else seq, seq, name))
+            seq += 1
 
     if not matched:
         return []
