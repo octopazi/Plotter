@@ -67,6 +67,18 @@ class FFTDialog(QDialog):
         self.unit_edit.setPlaceholderText("e.g. cnt, V, g")
         param_form.addRow("Unit Label:", self.unit_edit)
 
+        self.start_row_edit = QLineEdit()
+        self.start_row_edit.setPlaceholderText("0 (first row)")
+        param_form.addRow("Start Row:", self.start_row_edit)
+
+        self.end_row_edit = QLineEdit()
+        self.end_row_edit.setPlaceholderText("(last row)")
+        param_form.addRow("End Row:", self.end_row_edit)
+
+        self.row_range_hint = QLabel()
+        self.row_range_hint.setStyleSheet("color: gray;")
+        param_form.addRow("", self.row_range_hint)
+
         root_layout.addWidget(param_group)
 
         # --- Buttons ---
@@ -120,6 +132,11 @@ class FFTDialog(QDialog):
 
         self.column_list.addItems(numeric_cols)
 
+        # Update row range hint
+        total_rows = len(dataset.df)
+        self.row_range_hint.setText(f"Dataset has {total_rows} rows  (valid: 0 – {total_rows - 1})")
+        self.end_row_edit.setPlaceholderText(f"{total_rows} (last row)")
+
     # ------------------------------------------------------------------
     # Run FFT
     # ------------------------------------------------------------------
@@ -154,17 +171,42 @@ class FFTDialog(QDialog):
 
         unit = self.unit_edit.text().strip() or "unit"
 
-        # 4. Run FFT via core module
+        # 4. Validate and apply row range
+        total_rows = len(source_ds.df)
+        start_text = self.start_row_edit.text().strip()
+        end_text = self.end_row_edit.text().strip()
         try:
-            fft_df = FFTAnalyzer.compute(source_ds.df, signal_cols, sample_rate, unit)
+            row_start = int(start_text) if start_text else 0
+            row_end = int(end_text) if end_text else total_rows
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Row Range", "Start Row and End Row must be integers.")
+            return
+        if row_start < 0 or row_end > total_rows or row_start >= row_end:
+            QMessageBox.warning(
+                self, "Invalid Row Range",
+                f"Row range must satisfy: 0 ≤ Start Row < End Row ≤ {total_rows}.\n"
+                f"Entered: {row_start} – {row_end}"
+            )
+            return
+        subset_df = source_ds.df.iloc[row_start:row_end]
+        using_full_range = (row_start == 0 and row_end == total_rows)
+
+        # 5. Run FFT via core module
+        try:
+            fft_df = FFTAnalyzer.compute(subset_df, signal_cols, sample_rate, unit)
             metadata = FFTAnalyzer.build_metadata(source_ds, signal_cols, sample_rate, unit)
+            metadata["row_start"] = row_start
+            metadata["row_end"] = row_end
         except Exception as e:
             QMessageBox.critical(self, "FFT Error", f"FFT computation failed:\n{str(e)}")
             return
 
-        # 5. Store result as a new 'fft' dataset in DataManager
+        # 6. Store result as a new 'fft' dataset in DataManager
         cols_label = ", ".join(signal_cols)
-        result_name = f"{source_ds.name} — FFT [{cols_label}]"
+        if using_full_range:
+            result_name = f"{source_ds.name} — FFT [{cols_label}]"
+        else:
+            result_name = f"{source_ds.name} — FFT [{cols_label}] rows {row_start}–{row_end}"
         self.new_dataset_id = self.data_manager.add_dataset(
             name=result_name,
             dataframe=fft_df,
@@ -172,5 +214,6 @@ class FFTDialog(QDialog):
             dataset_type="fft",
             parent_id=source_ds.id
         )
+
 
         self.accept()

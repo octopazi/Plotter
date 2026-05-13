@@ -34,7 +34,7 @@
 - [x] **Column Statistics Summary:** Implemented for selected columns via Data Viewer header right-click context menu and `Tools → Column Statistics Summary`. Results are shown in a summary dialog with Min, Max, peak-to-peak, RMS, and SD (Population / Excel STDEV.P style), plus valid/invalid sample counts.
 - [ ] **Toggleable Statistics Panel:** Add an optional show/hide statistics panel (dock-style) for persistent, live column stats viewing without reopening dialogs.
 - [ ] **Apply Formula to Column:** Allow applying custom formulas to columns from the main window (right-click or formula bar for direct calculation, similar to conversions).
-- [ ] **FFT Output Naming (Column Info):** Update FFT output dataset naming to include column name (e.g., 'filename -- FFT (column)').
+- [x] **FFT Output Naming (Column Info):** Update FFT output dataset naming to include column name (e.g., 'filename -- FFT (column)').
 
 ## Further Discussion Needed
 - [x] **FFT Implementation Strategy:** Implemented via the `DataManager`—FFT results become a new `Dataset` linked to their parent.
