@@ -20,9 +20,10 @@ class FFTDialog(QDialog):
        in the shared DataManager and the dialog closes accepted.
     """
 
-    def __init__(self, data_manager, parent=None):
+    def __init__(self, data_manager, preferred_dataset_id=None, parent=None):
         super().__init__(parent)
         self.data_manager = data_manager
+        self.preferred_dataset_id = preferred_dataset_id
         self.new_dataset_id = None  # Populated on successful run
 
         self.setWindowTitle("FFT Analysis")
@@ -111,8 +112,12 @@ class FFTDialog(QDialog):
             label = f"{s['name']}  [{s['type']}]  ({s['rows']} rows)"
             self.dataset_combo.addItem(label, s['id'])
 
-        # Trigger column population for the first entry
-        self._on_dataset_changed(0)
+        # Default to the dataset currently selected in data viewer when available.
+        preferred_index = self.dataset_combo.findData(self.preferred_dataset_id)
+        if preferred_index >= 0:
+            self.dataset_combo.setCurrentIndex(preferred_index)
+        else:
+            self.dataset_combo.setCurrentIndex(0)
 
     def _on_dataset_changed(self, index):
         """Update the column list when the user picks a different dataset."""
