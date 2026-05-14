@@ -811,7 +811,9 @@ class MainWindow(QMainWindow):
 
     def open_fft_dialog(self):
         from .fft_dialog import FFTDialog
-        dialog = FFTDialog(self.data_manager, parent=self)
+        current_dataset = self.get_current_dataset()
+        preferred_dataset_id = current_dataset.id if current_dataset is not None else None
+        dialog = FFTDialog(self.data_manager, preferred_dataset_id=preferred_dataset_id, parent=self)
         if dialog.exec_():
             self.update_file_list_widget()
             # Auto-select the newly created FFT dataset in the list
