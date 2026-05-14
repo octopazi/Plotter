@@ -121,12 +121,13 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.addWidget(QLabel("Data Viewer (Editable):"))
         self.data_table_view = QTableView()
-        # Optimize view for large data sets
-        self.data_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-        # Enable editing of headers by double-clicking
+        # Optimize view for large data sets: use Interactive mode to prevent auto-measurement overhead
+        
         header = self.data_table_view.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionsClickable(True)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setDefaultSectionSize(100)  # Set readable default column width
+        header.setStretchLastSection(True)  # Fill remaining horizontal space
+        header.setSectionsClickable(False)  # Disable full-column selection on header click (too expensive on large datasets)
         header.sectionDoubleClicked.connect(self.edit_header)
         header.setContextMenuPolicy(Qt.CustomContextMenu)
         header.customContextMenuRequested.connect(self.show_table_header_context_menu)

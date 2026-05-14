@@ -10,6 +10,8 @@ class PandasTableModel(QAbstractTableModel):
     def __init__(self, data=None):
         super().__init__()
         self._data = pd.DataFrame() if data is None else data
+        # Cache column data types to avoid repeated isinstance() checks during scrolling
+        self._column_dtype_cache = self._build_dtype_cache()
 
     def rowCount(self, parent=None):
         return self._data.shape[0]
@@ -25,10 +27,9 @@ class PandasTableModel(QAbstractTableModel):
             value = self._data.iloc[index.row(), index.column()]
             if pd.isna(value):
                 return ""
-            # Handle both Python floats and NumPy floating types.
-            # Convert to a native Python float and format with
-            # enough significant digits to preserve precision.
-            if isinstance(value, (float, np.floating)):
+            # Check cached dtype to determine formatting without repeated isinstance() calls
+            col_idx = index.column()
+            if col_idx in self._column_dtype_cache and self._column_dtype_cache[col_idx] == 'float':
                 return format(float(value), '.17g')
             return str(value)
             
@@ -40,10 +41,7 @@ class PandasTableModel(QAbstractTableModel):
 
         if role == Qt.EditRole:
             try:
-                # Basic string conversion to maintain general types
-                col_type = type(self._data.iloc[index.row(), index.column()])
-                
-                # Attempt implicit conversion
+                # Attempt implicit conversion based on input format
                 str_val = str(value)
                 try:
                     if '.' in str_val or 'e' in str_val.lower():
@@ -102,6 +100,8 @@ class PandasTableModel(QAbstractTableModel):
             col_name = self._data.columns[section]
             self.beginResetModel()
             self._data.drop(columns=[col_name], inplace=True)
+            # Rebuild dtype cache after column deletion
+            self._column_dtype_cache = self._build_dtype_cache()
             self.endResetModel()
             return True
         except Exception as e:
@@ -113,6 +113,17 @@ class PandasTableModel(QAbstractTableModel):
             return Qt.NoItemFlags
 
         return super().flags(index) | Qt.ItemIsEditable
+
+    def _build_dtype_cache(self):
+        """Build a cache mapping column indices to simplified dtype strings."""
+        cache = {}
+        for col_idx, dtype in enumerate(self._data.dtypes):
+            # Classify dtypes into float or other for formatting purposes
+            if dtype in ('float64', 'float32', 'float16') or np.issubdtype(dtype, np.floating):
+                cache[col_idx] = 'float'
+            else:
+                cache[col_idx] = 'other'
+        return cache
 
     def setHeaderDataFlags(self, section, orientation):
         """Return flags for header editing. Used by table view for header section editing."""
