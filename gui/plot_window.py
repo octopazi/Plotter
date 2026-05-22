@@ -3,6 +3,7 @@ matplotlib.use('Qt5Agg')
 import numpy as np
 import pandas as pd
 import mplcursors
+from scipy.signal import correlate, correlation_lags
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -220,9 +221,16 @@ class PlotWindow(QMainWindow):
             'trend_type': 'Linear',
             'ma_enabled': False,
             'ma_window': 10,
-            'layers': ["Moving Average", "Trendline", "Raw Data"]
+            'layers': ["Moving Average", "Trendline", "Raw Data"],
+            'alignment_enabled': True,
+            'alignment_method': 'cross_correlation',
+            'max_auto_lag': 5000,
+            'auto_offsets': {},
+            'manual_offset_deltas': {},
+            'alignment_ref': {},
         }
         self._sync_settings_series()
+        self._sync_alignment_settings()
         
         y_str = ", ".join(self.y_cols)
         title = window_title if window_title else f"{plot_type.capitalize()} Plot: {y_str} vs {x_col}"
@@ -357,6 +365,7 @@ class PlotWindow(QMainWindow):
             return
         self._dataset_items[ds_id]['visible'] = item.checkState() == Qt.Checked
         self._sync_settings_series()
+        self._sync_alignment_settings()
         self.draw_plot()
 
     def open_add_dataset_dialog(self):
@@ -364,6 +373,7 @@ class PlotWindow(QMainWindow):
             QMessageBox.warning(self, "Unavailable", "Dataset manager is unavailable in this plot window.")
             return
 
+        dataset_count_before = len(self._dataset_order)
         dialog = AddDatasetDialog(self.data_manager, self._dataset_order, self)
         if not dialog.exec_():
             return
@@ -386,6 +396,28 @@ class PlotWindow(QMainWindow):
             return
 
         self._sync_settings_series()
+        self._sync_alignment_settings()
+
+        if dataset_count_before == 1 and len(self._dataset_order) == 2:
+            first_item = self._dataset_items.get(self._dataset_order[0])
+            second_item = self._dataset_items.get(self._dataset_order[1])
+            if first_item is not None and second_item is not None:
+                compatible = self._datasets_have_compatible_sampling([first_item, second_item])
+                if compatible:
+                    QMessageBox.information(
+                        self,
+                        "Sampling Reminder",
+                        "For best waveform comparison, use datasets with the same sampling rate.\n"
+                        "This pair looks compatible, so interpolation is not required.",
+                    )
+                else:
+                    QMessageBox.information(
+                        self,
+                        "Sampling Reminder",
+                        "For best waveform comparison, use datasets with the same sampling rate.\n"
+                        "Sampling mismatch detected, so linear interpolation will be applied.",
+                    )
+
         self._refresh_dataset_list_widget()
         self.draw_plot()
 
@@ -403,6 +435,7 @@ class PlotWindow(QMainWindow):
         self._dataset_order = [item_id for item_id in self._dataset_order if item_id != ds_id]
 
         self._sync_settings_series()
+        self._sync_alignment_settings()
         self._refresh_dataset_list_widget()
         self.draw_plot()
 
@@ -425,6 +458,167 @@ class PlotWindow(QMainWindow):
         self.settings['secondary_y'] = [
             label for label in self.settings.get('secondary_y', []) if label in all_labels
         ]
+
+    def _sync_alignment_settings(self):
+        auto_offsets = self.settings.get('auto_offsets', {})
+        if not isinstance(auto_offsets, dict):
+            auto_offsets = {}
+
+        manual_deltas = self.settings.get('manual_offset_deltas', {})
+        if not isinstance(manual_deltas, dict):
+            manual_deltas = {}
+
+        for ds_id in self._dataset_order:
+            auto_offsets.setdefault(ds_id, 0)
+            manual_deltas.setdefault(ds_id, 0)
+
+        auto_offsets = {ds_id: int(auto_offsets.get(ds_id, 0)) for ds_id in self._dataset_order}
+        manual_deltas = {ds_id: int(manual_deltas.get(ds_id, 0)) for ds_id in self._dataset_order}
+
+        if self._dataset_order:
+            # Dataset 1 is the alignment anchor.
+            manual_deltas[self._dataset_order[0]] = 0
+            auto_offsets[self._dataset_order[0]] = 0
+
+        self.settings['auto_offsets'] = auto_offsets
+        self.settings['manual_offset_deltas'] = manual_deltas
+
+    def _get_primary_alignment_series(self, item_data):
+        if not item_data.get('y_cols'):
+            return None, None
+
+        y_col = item_data['y_cols'][0]
+        y_raw = self._to_numeric_array(item_data['df'][y_col])
+        valid = np.isfinite(y_raw)
+        if not np.any(valid):
+            return None, y_col
+
+        y_series = y_raw[valid]
+        if y_series.size < 3:
+            return None, y_col
+        return y_series, y_col
+
+    def _standardize_signal(self, values):
+        arr = np.asarray(values, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if arr.size < 3:
+            return None
+
+        arr = arr - np.nanmean(arr)
+        std = float(np.nanstd(arr))
+        if std <= 1e-12:
+            return None
+        return arr / std
+
+    def _compute_auto_offsets_crosscorr(self, visible_items):
+        auto_offsets = {item['id']: 0 for item in visible_items}
+        if len(visible_items) < 2:
+            self.settings['alignment_ref'] = {}
+            return auto_offsets
+
+        ref_item = visible_items[0]
+        ref_signal, ref_col = self._get_primary_alignment_series(ref_item)
+        ref_norm = self._standardize_signal(ref_signal) if ref_signal is not None else None
+        self.settings['alignment_ref'] = {
+            'dataset_id': ref_item['id'],
+            'dataset_name': ref_item['name'],
+            'y_col': ref_col or "",
+        }
+
+        if ref_norm is None:
+            return auto_offsets
+
+        max_auto_lag = int(self.settings.get('max_auto_lag', 5000) or 0)
+        max_points = 20000
+
+        for target_item in visible_items[1:]:
+            target_signal, _ = self._get_primary_alignment_series(target_item)
+            target_norm = self._standardize_signal(target_signal) if target_signal is not None else None
+            if target_norm is None:
+                continue
+
+            stride = int(np.ceil(max(len(ref_norm), len(target_norm)) / max_points))
+            stride = max(stride, 1)
+
+            ref_ds = ref_norm[::stride]
+            target_ds = target_norm[::stride]
+            if ref_ds.size < 3 or target_ds.size < 3:
+                continue
+
+            corr = correlate(target_ds, ref_ds, mode='full', method='auto')
+            lags = correlation_lags(target_ds.size, ref_ds.size, mode='full')
+
+            if max_auto_lag > 0:
+                lag_cap = max(1, int(max_auto_lag / stride))
+                mask = (lags >= -lag_cap) & (lags <= lag_cap)
+                if np.any(mask):
+                    corr = corr[mask]
+                    lags = lags[mask]
+
+            if corr.size == 0:
+                continue
+
+            peak_lag = int(lags[int(np.argmax(corr))]) * stride
+            # Positive manual offset means shift right (delay), so invert lag sign.
+            auto_offsets[target_item['id']] = int(-peak_lag)
+
+        return auto_offsets
+
+    def _effective_dataset_offset(self, dataset_id, reference_dataset_id):
+        if dataset_id == reference_dataset_id:
+            return 0
+
+        auto_offsets = self.settings.get('auto_offsets', {})
+        manual_deltas = self.settings.get('manual_offset_deltas', {})
+
+        auto_part = int(auto_offsets.get(dataset_id, 0)) if self.settings.get('alignment_enabled', True) else 0
+        manual_part = int(manual_deltas.get(dataset_id, 0))
+        return auto_part + manual_part
+
+    def _apply_sample_offset_to_series(self, y_vals, sample_offset):
+        y = np.asarray(y_vals, dtype=float)
+        if y.size == 0 or sample_offset == 0:
+            return y.copy()
+
+        shifted = np.full(y.shape, np.nan, dtype=float)
+        if sample_offset > 0:
+            if sample_offset < y.size:
+                shifted[sample_offset:] = y[:-sample_offset]
+        else:
+            k = abs(sample_offset)
+            if k < y.size:
+                shifted[:-k] = y[k:]
+        return shifted
+
+    def _estimate_sampling_step(self, item_data):
+        x_raw = self._to_numeric_array(item_data['df'][item_data['x_col']])
+        finite = np.isfinite(x_raw)
+        x_vals = x_raw[finite]
+        if x_vals.size < 4:
+            return None
+
+        dx = np.diff(x_vals)
+        dx = dx[np.isfinite(dx)]
+        dx = np.abs(dx[dx != 0])
+        if dx.size < 3:
+            return None
+        return float(np.median(dx))
+
+    def _datasets_have_compatible_sampling(self, items):
+        if len(items) < 2:
+            return True
+
+        ref_step = self._estimate_sampling_step(items[0])
+        if ref_step is None:
+            return False
+
+        for item in items[1:]:
+            step = self._estimate_sampling_step(item)
+            if step is None:
+                return False
+            if not np.isclose(step, ref_step, rtol=1e-2, atol=0.0):
+                return False
+        return True
 
     def _get_visible_dataset_items(self):
         visible = []
@@ -452,9 +646,12 @@ class PlotWindow(QMainWindow):
             out[valid_mask] = dt[valid_mask].astype('int64').to_numpy(dtype=float) / 1_000_000_000.0
         return out
 
-    def _build_series_numeric(self, item_data, y_col):
+    def _build_series_numeric(self, item_data, y_col, sample_offset=0):
         x_raw = self._to_numeric_array(item_data['df'][item_data['x_col']])
         y_raw = self._to_numeric_array(item_data['df'][y_col])
+
+        if sample_offset:
+            y_raw = self._apply_sample_offset_to_series(y_raw, int(sample_offset))
 
         valid = np.isfinite(x_raw) & np.isfinite(y_raw)
         if not np.any(valid):
@@ -775,9 +972,18 @@ class PlotWindow(QMainWindow):
             self.canvas.draw_idle()
 
     def open_settings_dialog(self):
-        dialog = PlotSettingsDialog(self.settings, self)
+        self._sync_alignment_settings()
+        settings_payload = self.settings.copy()
+        settings_payload['dataset_items'] = [
+            {'id': ds_id, 'name': self._dataset_items[ds_id]['name']}
+            for ds_id in self._dataset_order
+            if ds_id in self._dataset_items
+        ]
+
+        dialog = PlotSettingsDialog(settings_payload, self)
         if dialog.exec_():
             self.settings = dialog.settings
+            self._sync_alignment_settings()
             self.draw_plot()
 
     def get_zorder(self, layer_name):
@@ -804,6 +1010,7 @@ class PlotWindow(QMainWindow):
             del self.ax2
             
         self._sync_settings_series()
+        self._sync_alignment_settings()
 
         data_z = self.get_zorder("Raw Data")
         trend_z = self.get_zorder("Trendline")
@@ -816,12 +1023,20 @@ class PlotWindow(QMainWindow):
             self.ax2 = self.ax.twinx()
 
         visible_items = self._get_visible_dataset_items()
+        if self.settings.get('alignment_enabled', True) and len(visible_items) > 1:
+            self.settings['auto_offsets'] = self._compute_auto_offsets_crosscorr(visible_items)
+        else:
+            self.settings['auto_offsets'] = {item['id']: 0 for item in visible_items}
+        self._sync_alignment_settings()
+
+        reference_id = visible_items[0]['id'] if visible_items else None
         series_entries = []
 
         for ds_index, item_data in enumerate(visible_items):
             style = self._dataset_style(item_data['id'], ds_index)
+            effective_offset = self._effective_dataset_offset(item_data['id'], reference_id)
             for y_col in item_data['y_cols']:
-                x_vals, y_vals = self._build_series_numeric(item_data, y_col)
+                x_vals, y_vals = self._build_series_numeric(item_data, y_col, sample_offset=effective_offset)
                 if x_vals is None or y_vals is None:
                     continue
                 series_entries.append({
@@ -833,6 +1048,7 @@ class PlotWindow(QMainWindow):
                     'y': y_vals,
                     'label': self._series_label(item_data['name'], y_col),
                     'style': style,
+                    'effective_offset': effective_offset,
                 })
 
         if not series_entries:
@@ -842,7 +1058,10 @@ class PlotWindow(QMainWindow):
             return
 
         should_align = len(visible_items) > 1
-        if should_align:
+        sampling_compatible = self._datasets_have_compatible_sampling(visible_items) if should_align else True
+        should_interpolate = should_align and not sampling_compatible
+
+        if should_interpolate:
             common_x = np.unique(np.concatenate([entry['x'] for entry in series_entries]))
         else:
             common_x = None
@@ -851,7 +1070,7 @@ class PlotWindow(QMainWindow):
             label_prefix = series['label']
             style = series['style']
 
-            if should_align and common_x is not None and common_x.size > 0:
+            if should_interpolate and common_x is not None and common_x.size > 0:
                 if series['x'].size >= 2:
                     plot_x = common_x
                     plot_y = np.interp(common_x, series['x'], series['y'], left=np.nan, right=np.nan)
@@ -958,8 +1177,10 @@ class PlotWindow(QMainWindow):
             leg.set_draggable(True)
             leg.set_zorder(100) # Ensure it is on the very top
 
-        if should_align:
-            self.ax.set_xlabel("Aligned X-axis (Interpolated)")
+        if should_interpolate:
+            self.ax.set_xlabel("Aligned X-axis (Interpolated due to mismatch)")
+        elif should_align:
+            self.ax.set_xlabel("Native X-axis (No interpolation)")
         else:
             first_item = visible_items[0]
             self.ax.set_xlabel(first_item['x_col'])

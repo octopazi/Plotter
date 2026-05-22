@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, 
     QCheckBox, QSpinBox, QPushButton, QTabWidget, QWidget,
-    QListWidget, QGroupBox, QAbstractItemView
+    QListWidget, QGroupBox, QAbstractItemView, QFormLayout
 )
 from PyQt5.QtCore import Qt
 
@@ -10,11 +10,21 @@ class PlotSettingsDialog(QDialog):
     def __init__(self, current_settings, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Plot Settings")
-        self.resize(400, 350)
+        self.resize(460, 420)
         
         # Store a copy of current settings
         # format: { 'trend_enabled': bool, 'trend_type': str, 'ma_enabled': bool, 'ma_window': int, 'layers': list }
         self.settings = current_settings.copy()
+        self.dataset_items = self.settings.get('dataset_items', [])
+        if not isinstance(self.dataset_items, list):
+            self.dataset_items = []
+
+        if not isinstance(self.settings.get('manual_offset_deltas', {}), dict):
+            self.settings['manual_offset_deltas'] = {}
+        if not isinstance(self.settings.get('auto_offsets', {}), dict):
+            self.settings['auto_offsets'] = {}
+        if not isinstance(self.settings.get('alignment_ref', {}), dict):
+            self.settings['alignment_ref'] = {}
         
         self.init_ui()
         
@@ -105,9 +115,68 @@ class PlotSettingsDialog(QDialog):
         sec_layout.addWidget(self.sec_list)
         sec_layout.addStretch()
 
+        # Tab 4: Alignment
+        alignment_tab = QWidget()
+        align_layout = QVBoxLayout(alignment_tab)
+
+        auto_group = QGroupBox("Auto Alignment")
+        auto_layout = QVBoxLayout(auto_group)
+
+        self.align_cb = QCheckBox("Enable Auto Alignment (scipy correlate)")
+        self.align_cb.setChecked(self.settings.get('alignment_enabled', True))
+        auto_layout.addWidget(self.align_cb)
+
+        max_lag_row = QHBoxLayout()
+        max_lag_row.addWidget(QLabel("Max Auto Lag (samples, 0 = unlimited):"))
+        self.max_lag_spin = QSpinBox()
+        self.max_lag_spin.setRange(0, 1000000)
+        self.max_lag_spin.setValue(int(self.settings.get('max_auto_lag', 5000)))
+        max_lag_row.addWidget(self.max_lag_spin)
+        auto_layout.addLayout(max_lag_row)
+
+        ref = self.settings.get('alignment_ref', {})
+        ref_name = str(ref.get('dataset_name', '')).strip() or "(pending)"
+        ref_y = str(ref.get('y_col', '')).strip() or "(first visible Y)"
+        self.ref_label = QLabel(f"Reference: {ref_name} / {ref_y}")
+        self.ref_label.setStyleSheet("color: gray;")
+        auto_layout.addWidget(self.ref_label)
+
+        align_layout.addWidget(auto_group)
+
+        manual_group = QGroupBox("Manual Offset Delta (samples)")
+        manual_form = QFormLayout(manual_group)
+        self.offset_spins = {}
+
+        manual_deltas = self.settings.get('manual_offset_deltas', {})
+        auto_offsets = self.settings.get('auto_offsets', {})
+        for idx, ds in enumerate(self.dataset_items):
+            ds_id = ds.get('id')
+            ds_name = str(ds.get('name', ds_id))
+            if not ds_id:
+                continue
+
+            spin = QSpinBox()
+            spin.setRange(-1000000, 1000000)
+            spin.setValue(int(manual_deltas.get(ds_id, 0)))
+            if idx == 0:
+                spin.setValue(0)
+                spin.setEnabled(False)
+
+            auto_val = int(auto_offsets.get(ds_id, 0))
+            label = f"{ds_name} (auto={auto_val:+d})"
+            manual_form.addRow(label, spin)
+            self.offset_spins[ds_id] = spin
+
+        if not self.offset_spins:
+            manual_form.addRow(QLabel("No datasets available"))
+
+        align_layout.addWidget(manual_group)
+        align_layout.addStretch()
+
         # Add Tabs
         self.tabs.addTab(analysis_tab, "Analysis")
         self.tabs.addTab(secondary_tab, "Secondary Axis")
+        self.tabs.addTab(alignment_tab, "Alignment")
         self.tabs.addTab(layer_tab, "Layers")
         
         layout.addWidget(self.tabs)
@@ -146,5 +215,22 @@ class PlotSettingsDialog(QDialog):
         # Save Secondary Axis Tab
         selected_sec = [item.text() for item in self.sec_list.selectedItems()]
         self.settings['secondary_y'] = selected_sec
+
+        # Save Alignment Tab
+        self.settings['alignment_enabled'] = self.align_cb.isChecked()
+        self.settings['max_auto_lag'] = self.max_lag_spin.value()
+
+        manual_deltas = self.settings.get('manual_offset_deltas', {})
+        if not isinstance(manual_deltas, dict):
+            manual_deltas = {}
+        for idx, ds in enumerate(self.dataset_items):
+            ds_id = ds.get('id')
+            if not ds_id or ds_id not in self.offset_spins:
+                continue
+            if idx == 0:
+                manual_deltas[ds_id] = 0
+            else:
+                manual_deltas[ds_id] = int(self.offset_spins[ds_id].value())
+        self.settings['manual_offset_deltas'] = manual_deltas
         
         self.accept()
