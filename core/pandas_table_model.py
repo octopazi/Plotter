@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from pandas.api.types import is_float_dtype
 from PyQt5.QtCore import QAbstractTableModel, Qt
 
 class PandasTableModel(QAbstractTableModel):
@@ -119,9 +120,17 @@ class PandasTableModel(QAbstractTableModel):
         cache = {}
         for col_idx, dtype in enumerate(self._data.dtypes):
             # Classify dtypes into float or other for formatting purposes
-            if dtype in ('float64', 'float32', 'float16') or np.issubdtype(dtype, np.floating):
+            # pandas extension dtypes (e.g., StringDtype) are not always interpretable
+            # by numpy.issubdtype, so use pandas helper first and fallback safely.
+            if is_float_dtype(dtype):
                 cache[col_idx] = 'float'
             else:
+                try:
+                    if np.issubdtype(dtype, np.floating):
+                        cache[col_idx] = 'float'
+                        continue
+                except TypeError:
+                    pass
                 cache[col_idx] = 'other'
         return cache
 
