@@ -608,7 +608,14 @@ class MainWindow(QMainWindow):
             y_cols = dialog.selected_y_columns
 
             # 2. Show Plot Window after user confirmed input.
-            self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=f"{dataset.name} - Plot")
+            self._create_plot_window(
+                dataset,
+                x_col,
+                y_cols,
+                plot_type,
+                window_title=f"{dataset.name} - Plot",
+                dataset_id=ds_id,
+            )
 
     def open_run_config_plots_dialog(self):
         if not self.data_manager.datasets:
@@ -679,7 +686,7 @@ class MainWindow(QMainWindow):
 
         QMessageBox.information(self, "Run Config Plots", msg)
 
-    def _create_plot_window(self, dataset, x_col, y_cols, plot_type, window_title=None):
+    def _create_plot_window(self, dataset, x_col, y_cols, plot_type, window_title=None, dataset_id=None):
         from .plot_window import PlotWindow
 
         plot_win = PlotWindow(
@@ -689,6 +696,9 @@ class MainWindow(QMainWindow):
             plot_type=plot_type,
             window_title=window_title,
             parent=self,
+            dataset_id=dataset_id,
+            dataset_name=dataset.name,
+            data_manager=self.data_manager,
         )
 
         # Avoid early garbage collection by maintaining references to open plots
@@ -795,7 +805,14 @@ class MainWindow(QMainWindow):
                 window_title = f"{dataset.name} - {fig_title}" if fig_title else f"{dataset.name} - Auto Plot {idx}"
 
                 try:
-                    self._create_plot_window(dataset, x_col, y_cols, plot_type, window_title=window_title)
+                    self._create_plot_window(
+                        dataset,
+                        x_col,
+                        y_cols,
+                        plot_type,
+                        window_title=window_title,
+                        dataset_id=ds_id,
+                    )
                     summary["created"] += 1
                 except Exception as e:
                     summary["skipped"].append(f"{dataset.name} / figure #{idx}: failed to render ({str(e)})")
