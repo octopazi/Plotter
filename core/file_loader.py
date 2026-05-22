@@ -107,6 +107,9 @@ class FileLoader:
             skiprows=skip_total,
             comment=data_ignore_prefix,
             header=header_row,
+            # Prevent pandas from auto-promoting the first data field to DataFrame index
+            # when header/data field counts differ (e.g., trailing delimiters in data rows).
+            index_col=False,
             nrows=nrows,
             engine="python",
             skipinitialspace=True,
@@ -157,6 +160,42 @@ class FileLoader:
         # This allows users to write formulas using their mapped names (e.g., "TC1 / 1000")
         columns_mapping = data_config.get("columns", {})
         rename_map = {}
+        mapping_warnings = []
+
+        def resolve_source_column(index_value, axis_label):
+            """Resolve config index to current df column name and report mapping issues."""
+            try:
+                idx = int(index_value)
+            except (TypeError, ValueError):
+                mapping_warnings.append(
+                    f"{axis_label} column index '{index_value}' is not a valid integer."
+                )
+                return None, None
+
+            if idx < 0:
+                mapping_warnings.append(
+                    f"{axis_label} column index {idx} is negative and cannot be mapped."
+                )
+                return None, idx
+
+            if has_header_row:
+                if idx >= len(original_cols):
+                    mapping_warnings.append(
+                        f"{axis_label} column index {idx} is out of range for this file "
+                        f"({len(original_cols)} columns)."
+                    )
+                    return None, idx
+                source_col = original_cols[idx]
+            else:
+                source_col = f"col{idx}"
+
+            if source_col not in df.columns:
+                mapping_warnings.append(
+                    f"{axis_label} source column '{source_col}' was not found in imported data."
+                )
+                return None, idx
+
+            return source_col, idx
         
         # Map X Axis
         x_def = columns_mapping.get("x", {})
@@ -165,8 +204,7 @@ class FileLoader:
         if x_type == "column":
             # Use the data from the specified column index
             if "index" in x_def:
-                x_idx = x_def["index"]
-                c_name = f"col{x_idx}" if not has_header_row else original_cols[x_idx]
+                c_name, _x_idx = resolve_source_column(x_def["index"], "X")
                 if c_name in df.columns:
                     rename_map[c_name] = x_def.get("name", "x")
         elif x_type == "index":
@@ -178,9 +216,8 @@ class FileLoader:
         y_defs = columns_mapping.get("y", [])
         for y_def in y_defs:
             if "index" in y_def:
-                y_idx = y_def["index"]
-                y_title = y_def.get("name", f"y_{y_idx}")
-                c_name = f"col{y_idx}" if not has_header_row else original_cols[y_idx]
+                c_name, y_idx = resolve_source_column(y_def["index"], f"Y '{y_def.get('name', 'column')}'")
+                y_title = y_def.get("name", f"y_{y_idx}") if y_idx is not None else y_def.get("name", "y")
                 if c_name in df.columns:
                     rename_map[c_name] = y_title
                     
@@ -219,6 +256,8 @@ class FileLoader:
             original_cols,
             has_header_row,
         )
+        if mapping_warnings:
+            column_mismatch_warnings.extend(mapping_warnings)
                 
         return {
             "metadata": metadata,
