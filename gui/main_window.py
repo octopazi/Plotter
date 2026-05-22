@@ -151,6 +151,7 @@ class MainWindow(QMainWindow):
                 all_conversion_errors = []   # (filename, ConversionError) pairs
                 all_column_warnings = []     # (filename, warning_text) pairs
                 all_downsampling_errors = [] # (filename, error_str) pairs
+                all_postprocess_warnings = [] # (filename, warning_text) pairs
                 
                 # Load each file and add to DataManager independently
                 for file_path in dialog.selected_files:
@@ -158,14 +159,20 @@ class MainWindow(QMainWindow):
                     if not result: continue
                     
                     df = result['dataframe']
-                    metadata = result['metadata']
+                    metadata = dict(result['metadata'])
                     base_name = os.path.basename(file_path)
+                    hidden_columns = result.get('hidden_columns', [])
+
+                    if hidden_columns:
+                        metadata['hidden_columns'] = list(hidden_columns)
 
                     # Collect conversion errors for this file
                     for err in result.get('conversion_errors', []):
                         all_conversion_errors.append((base_name, err))
                     for warn in result.get('column_mismatch_warnings', []):
                         all_column_warnings.append((base_name, warn))
+                    for warn in result.get('postprocess_warnings', []):
+                        all_postprocess_warnings.append((base_name, warn))
 
                     # Downsampling: apply naming convention and collect errors
                     ds_err = result.get('downsampling_error')
@@ -226,6 +233,15 @@ class MainWindow(QMainWindow):
                         "The files were imported without downsampling.\n\n"
                         + "\n\n".join(lines),
                     )
+
+                if all_postprocess_warnings:
+                    lines = [f"[{fn}]  {warn}" for fn, warn in all_postprocess_warnings]
+                    QMessageBox.warning(
+                        self,
+                        "Post-Process Column Warnings",
+                        f"Column hide/delete rules could not be fully applied in {len(all_postprocess_warnings)} case(s).\n\n"
+                        + "\n".join(lines),
+                    )
                 
                 # Show summary
                 msg = f"Successfully imported {added_count} file(s)."
@@ -274,9 +290,21 @@ class MainWindow(QMainWindow):
             # Update the table model directly with the dataset's dataframe
             self.table_model = PandasTableModel(dataset.df)
             self.data_table_view.setModel(self.table_model)
+            self._apply_hidden_columns_to_table(dataset)
             
             # Edits in PandasTableModel modify dataset.df directly in memory, 
             # so no manual 'sync_edited_data' index mapping is required anymore!
+
+    def _get_hidden_columns(self, dataset):
+        metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+        return self._normalize_hidden_columns(metadata.get("hidden_columns", []))
+
+    def _apply_hidden_columns_to_table(self, dataset):
+        hidden_set = set(self._get_hidden_columns(dataset))
+        columns = dataset.df.columns.tolist()
+
+        for idx, col_name in enumerate(columns):
+            self.data_table_view.setColumnHidden(idx, col_name in hidden_set)
 
     def edit_header(self, section):
         """Allow user to edit column header by double-clicking on it."""
@@ -594,11 +622,14 @@ class MainWindow(QMainWindow):
         if not dataset:
             return
             
-        df = dataset.df
-        columns = df.columns.tolist()
-        # Filter out source file column for plot selection
-        if '_source_file' in columns:
-            columns.remove('_source_file')
+        columns = self._get_plotable_columns(dataset)
+        if len(columns) < 2:
+            QMessageBox.warning(
+                self,
+                "Not Enough Columns",
+                "Not enough visible columns are available for plotting.",
+            )
+            return
         
         # 1. Pop UI to ask for X and Y Selection
         from .plot_setup_dialog import PlotSetupDialog
@@ -720,8 +751,31 @@ class MainWindow(QMainWindow):
                 return col
         return None
 
-    def _build_auto_plot_selection(self, df, figure_cfg):
-        available_columns = [col for col in df.columns.tolist() if col != "_source_file"]
+    def _normalize_hidden_columns(self, values):
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            return []
+
+        hidden = []
+        seen = set()
+        for value in values:
+            name = str(value).strip()
+            if not name or name in seen:
+                continue
+            hidden.append(name)
+            seen.add(name)
+        return hidden
+
+    def _get_plotable_columns(self, dataset):
+        columns = [col for col in dataset.df.columns.tolist() if col != "_source_file"]
+        hidden_columns = set(self._get_hidden_columns(dataset))
+        if not hidden_columns:
+            return columns
+        return [col for col in columns if col not in hidden_columns]
+
+    def _build_auto_plot_selection(self, dataset, figure_cfg):
+        available_columns = self._get_plotable_columns(dataset)
         if len(available_columns) < 2:
             return None, None, "not enough columns to build a plot"
 
@@ -792,7 +846,7 @@ class MainWindow(QMainWindow):
                 continue
 
             for idx, figure_cfg in enumerate(figures, start=1):
-                x_col, y_cols, reason = self._build_auto_plot_selection(dataset.df, figure_cfg)
+                x_col, y_cols, reason = self._build_auto_plot_selection(dataset, figure_cfg)
                 if reason:
                     summary["skipped"].append(f"{dataset.name} / figure #{idx}: {reason}")
                     continue

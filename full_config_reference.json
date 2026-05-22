@@ -239,6 +239,17 @@
 
   ],
 
+  "_postprocess_doc": "──────────────────────────────────────────────────────────",
+  "_postprocess_doc2": "SECTION: postprocess_columns  (optional top-level key)",
+  "_postprocess_doc3": "Applies AFTER conversions (and after downsampling if timing='after_conversions').",
+  "_postprocess_doc4": "Use this to clean up plot selectors without changing conversion formulas.",
+  "postprocess_columns": {
+    "_doc_hidden": "Columns to hide from plot selectors but keep in the imported dataframe.",
+    "hidden": ["raw_word", "mode_code"],
+    "_doc_deleted": "Columns to remove from dataframe after processing completes.",
+    "deleted": ["raw_hex"]
+  },
+
   "_downsampling_doc": "──────────────────────────────────────────────────────────────────────────────",
   "_downsampling_doc2": "SECTION: downsampling  (optional top-level key)",
   "_downsampling_doc3": "Reduces the number of rows in the imported dataset at import time.",

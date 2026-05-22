@@ -19,7 +19,7 @@ class CreateImportFormatDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create Import Format")
-        self.resize(600, 650)
+        self.resize(800, 650)
 
         root_layout = QVBoxLayout(self)
 
@@ -36,6 +36,18 @@ class CreateImportFormatDialog(QDialog):
         # ── Tab Widget ─────────────────────────────────────
         self.tabs = QTabWidget()
         root_layout.addWidget(self.tabs)
+
+        # Internal storage
+        self.y_columns = []
+        self.conversions = []
+        self.plot_figures = []
+        self.postprocess_hidden_extra = []
+        self.postprocess_deleted_extra = []
+        self._y_editing_row = None
+        self._conv_editing_row = None
+        self.column_names_from_header = False
+        self.x_source_name = ""
+        self._plot_editing_row = None
 
         self._build_tab_file_format()
         self._build_tab_columns()
@@ -54,15 +66,6 @@ class CreateImportFormatDialog(QDialog):
         btn_row.addWidget(close_btn)
         root_layout.addLayout(btn_row)
 
-        # Internal storage
-        self.y_columns = []
-        self.conversions = []
-        self.plot_figures = []
-        self._y_editing_row = None
-        self._conv_editing_row = None
-        self.column_names_from_header = False
-        self.x_source_name = ""
-        self._plot_editing_row = None
         self._saved_state = self._collect_config_state()
 
     # ==============================================================
@@ -246,6 +249,15 @@ class CreateImportFormatDialog(QDialog):
         self.y_index_spin = QSpinBox()
         self.y_index_spin.setRange(0, 50)
         self.y_index_spin.setToolTip("Zero-based column index in the data file.")
+        self.y_hidden_check = QCheckBox("Hidden")
+        self.y_hidden_check.setToolTip(
+            "Keep this column in the imported table but hide it from plot selectors."
+        )
+        self.y_deleted_check = QCheckBox("Delete")
+        self.y_deleted_check.setToolTip(
+            "Delete this column after conversions complete."
+        )
+        self.y_deleted_check.toggled.connect(self._on_y_delete_toggled)
         self.btn_add_y = QPushButton("Add Y")
         self.btn_add_y.clicked.connect(self.add_y_column)
         self.btn_cancel_y = QPushButton("Cancel")
@@ -258,6 +270,8 @@ class CreateImportFormatDialog(QDialog):
         y_add_row.addWidget(self.y_name_edit)
         y_add_row.addWidget(QLabel("Index:"))
         y_add_row.addWidget(self.y_index_spin)
+        y_add_row.addWidget(self.y_hidden_check)
+        y_add_row.addWidget(self.y_deleted_check)
         y_add_row.addWidget(self.btn_add_y)
         y_add_row.addWidget(self.btn_cancel_y)
         y_add_row.addWidget(btn_del_y)
@@ -266,10 +280,17 @@ class CreateImportFormatDialog(QDialog):
         self.y_list = QListWidget()
         self.y_list.itemDoubleClicked.connect(self._start_edit_y_column)
         ly.addWidget(self.y_list)
+
+        self.postprocess_extra_label = QLabel("")
+        self.postprocess_extra_label.setWordWrap(True)
+        self.postprocess_extra_label.setStyleSheet("color: #666;")
+        ly.addWidget(self.postprocess_extra_label)
+
         box_y.setLayout(ly)
         layout.addWidget(box_y)
 
         self.tabs.addTab(page, "Columns")
+        self._refresh_postprocess_extra_label()
 
     def _build_header_config(self):
         expert_index_group = self.expert_index_group.value()
@@ -351,6 +372,90 @@ class CreateImportFormatDialog(QDialog):
         # Manual X edits invalidate the previously detected source_name mapping.
         self.x_source_name = ""
 
+    def _on_y_delete_toggled(self, checked):
+        if checked:
+            self.y_hidden_check.setChecked(False)
+            self.y_hidden_check.setEnabled(False)
+            return
+        self.y_hidden_check.setEnabled(True)
+
+    def _normalize_name_list(self, values):
+        if isinstance(values, str):
+            values = [v.strip() for v in values.split(",") if v.strip()]
+        if not isinstance(values, list):
+            return []
+
+        names = []
+        seen = set()
+        for value in values or []:
+            name = str(value).strip()
+            if not name or name in seen:
+                continue
+            names.append(name)
+            seen.add(name)
+        return names
+
+    def _format_y_item_text(self, y_col):
+        text = f"{y_col.get('name', '')} (index {y_col.get('index', 0)})"
+        if y_col.get("deleted", False):
+            return f"{text} [delete]"
+        if y_col.get("hidden", False):
+            return f"{text} [hidden]"
+        return text
+
+    def _refresh_postprocess_extra_label(self):
+        if not hasattr(self, "postprocess_extra_label"):
+            return
+
+        hidden = self._normalize_name_list(self.postprocess_hidden_extra)
+        deleted = self._normalize_name_list(self.postprocess_deleted_extra)
+        if not hidden and not deleted:
+            self.postprocess_extra_label.setText("")
+            return
+
+        info = [
+            "Additional post-process columns are preserved from config "
+            "(not editable in this list):"
+        ]
+        if hidden:
+            info.append(f"Hidden: {', '.join(hidden)}")
+        if deleted:
+            info.append(f"Deleted: {', '.join(deleted)}")
+        self.postprocess_extra_label.setText("\n".join(info))
+
+    def _build_postprocess_columns(self):
+        y_names = {
+            str(y_col.get("name", "")).strip()
+            for y_col in self.y_columns
+            if str(y_col.get("name", "")).strip()
+        }
+        hidden = [
+            name for name in self._normalize_name_list(self.postprocess_hidden_extra)
+            if name not in y_names
+        ]
+        deleted = [
+            name for name in self._normalize_name_list(self.postprocess_deleted_extra)
+            if name not in y_names
+        ]
+
+        for y_col in self.y_columns:
+            name = str(y_col.get("name", "")).strip()
+            if not name:
+                continue
+            if y_col.get("deleted", False):
+                deleted.append(name)
+            elif y_col.get("hidden", False):
+                hidden.append(name)
+
+        deleted = self._normalize_name_list(deleted)
+        deleted_set = set(deleted)
+        hidden = [name for name in self._normalize_name_list(hidden) if name not in deleted_set]
+
+        return {
+            "hidden": hidden,
+            "deleted": deleted,
+        }
+
     def detect_columns_from_sample(self):
         if self.y_columns:
             reply = QMessageBox.question(
@@ -413,7 +518,7 @@ class CreateImportFormatDialog(QDialog):
         self.y_columns = y_cfg
         self.y_list.clear()
         for yc in self.y_columns:
-            self.y_list.addItem(f"{yc.get('name', '')} (index {yc.get('index', 0)})")
+            self.y_list.addItem(self._format_y_item_text(yc))
 
         self.x_type.setCurrentText(x_cfg.get("type", "index"))
         self.x_index.setValue(int(x_cfg.get("index", 0)))
@@ -881,6 +986,9 @@ class CreateImportFormatDialog(QDialog):
         yc = self.y_columns[row]
         self.y_name_edit.setText(yc.get("name", ""))
         self.y_index_spin.setValue(yc.get("index", 0))
+        self.y_hidden_check.setChecked(bool(yc.get("hidden", False)))
+        self.y_deleted_check.setChecked(bool(yc.get("deleted", False)))
+        self._on_y_delete_toggled(self.y_deleted_check.isChecked())
 
         self._y_editing_row = row
         self.btn_add_y.setText("Update Y")
@@ -889,6 +997,9 @@ class CreateImportFormatDialog(QDialog):
     def _cancel_edit_y(self):
         self._y_editing_row = None
         self.y_name_edit.clear()
+        self.y_hidden_check.setChecked(False)
+        self.y_deleted_check.setChecked(False)
+        self._on_y_delete_toggled(False)
         self.btn_add_y.setText("Add Y")
         self.btn_cancel_y.setVisible(False)
 
@@ -898,14 +1009,23 @@ class CreateImportFormatDialog(QDialog):
     def add_y_column(self):
         name = self.y_name_edit.text().strip()
         index = self.y_index_spin.value()
+        is_hidden = self.y_hidden_check.isChecked()
+        is_deleted = self.y_deleted_check.isChecked()
         if not name:
             QMessageBox.warning(self, "Error", "Y column name cannot be empty.")
             return
 
+        item_data = {
+            "name": name,
+            "index": index,
+            "hidden": bool(is_hidden and not is_deleted),
+            "deleted": bool(is_deleted),
+        }
+
         if self._y_editing_row is None:
-            self.y_columns.append({"name": name, "index": index})
-            self.y_list.addItem(f"{name} (index {index})")
-            self.y_name_edit.clear()
+            self.y_columns.append(item_data)
+            self.y_list.addItem(self._format_y_item_text(item_data))
+            self._reset_y_form()
             return
 
         row = self._y_editing_row
@@ -914,14 +1034,14 @@ class CreateImportFormatDialog(QDialog):
             self._cancel_edit_y()
             return
 
-        updated = {"name": name, "index": index}
+        updated = item_data
         existing = self.y_columns[row]
         if existing.get("source_name") and existing.get("index") == index:
             updated["source_name"] = existing.get("source_name")
         self.y_columns[row] = updated
         item = self.y_list.item(row)
         if item is not None:
-            item.setText(f"{name} (index {index})")
+            item.setText(self._format_y_item_text(updated))
         self._reset_y_form()
 
     def delete_y_column(self):
@@ -1239,7 +1359,14 @@ class CreateImportFormatDialog(QDialog):
                         "index": self.x_index.value(),
                         "source_name": self.x_source_name,
                     },
-                    "y": list(self.y_columns),
+                    "y": [
+                        {
+                            key: value
+                            for key, value in y_col.items()
+                            if key in ("name", "index", "source_name")
+                        }
+                        for y_col in self.y_columns
+                    ],
                 },
             },
             "conversions": list(self.conversions),
@@ -1248,6 +1375,7 @@ class CreateImportFormatDialog(QDialog):
                 "figures": list(self.plot_figures),
             },
             "downsampling": self._collect_downsampling_config(),
+            "postprocess_columns": self._build_postprocess_columns(),
         }
 
     def _mark_saved(self):
@@ -1372,6 +1500,11 @@ class EditImportFormatDialog(CreateImportFormatDialog):
 
         # 4. Columns
         cols = d.get("columns", {})
+        post_cfg = config.get("postprocess_columns", {})
+        hidden_names = self._normalize_name_list(post_cfg.get("hidden", []))
+        deleted_names = self._normalize_name_list(post_cfg.get("deleted", []))
+        hidden_set = set(hidden_names)
+        deleted_set = set(deleted_names)
         xc = cols.get("x", {})
         self.x_type.setCurrentText(xc.get("type", "column"))
         self.x_index.setValue(xc.get("index", 0))
@@ -1379,15 +1512,35 @@ class EditImportFormatDialog(CreateImportFormatDialog):
 
         self.y_columns = []
         self.y_list.clear()
+        mapped_names = []
         for yc in cols.get("y", []):
             n = yc.get("name", "")
             i = yc.get("index", 0)
             source_name = yc.get("source_name", "")
-            new_item = {"name": n, "index": i}
+            is_deleted = n in deleted_set
+            is_hidden = (n in hidden_set) and not is_deleted
+            new_item = {
+                "name": n,
+                "index": i,
+                "hidden": is_hidden,
+                "deleted": is_deleted,
+            }
             if source_name:
                 new_item["source_name"] = source_name
             self.y_columns.append(new_item)
-            self.y_list.addItem(f"{n} (index {i})")
+            self.y_list.addItem(self._format_y_item_text(new_item))
+            mapped_names.append(n)
+
+        mapped_set = set(mapped_names)
+        self.postprocess_hidden_extra = [
+            name for name in hidden_names
+            if name not in mapped_set and name not in deleted_set
+        ]
+        self.postprocess_deleted_extra = [
+            name for name in deleted_names
+            if name not in mapped_set
+        ]
+        self._refresh_postprocess_extra_label()
 
         if self.column_names_from_header:
             self.detect_status.setText("Loaded detected-column mapping from config.")

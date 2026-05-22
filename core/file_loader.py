@@ -12,6 +12,45 @@ from .header_detector import (
 
 class FileLoader:
     """Handles the Loading and Parsing of Data Files based on JSON Configurations."""
+
+    @staticmethod
+    def _normalize_postprocess_names(values):
+        names = []
+        seen = set()
+        for value in values or []:
+            name = str(value).strip()
+            if not name or name in seen:
+                continue
+            names.append(name)
+            seen.add(name)
+        return names
+
+    @staticmethod
+    def _apply_postprocess_columns(df, postprocess_cfg):
+        if not isinstance(postprocess_cfg, dict):
+            return [], []
+
+        deleted = FileLoader._normalize_postprocess_names(postprocess_cfg.get("deleted", []))
+        hidden = FileLoader._normalize_postprocess_names(postprocess_cfg.get("hidden", []))
+        warnings = []
+
+        for col_name in deleted:
+            if col_name in df.columns:
+                df.drop(columns=[col_name], inplace=True)
+            else:
+                warnings.append(f"Postprocess delete skipped: column '{col_name}' was not found.")
+
+        deleted_set = set(deleted)
+        hidden_columns = []
+        for col_name in hidden:
+            if col_name in deleted_set:
+                continue
+            if col_name in df.columns:
+                hidden_columns.append(col_name)
+            else:
+                warnings.append(f"Postprocess hide skipped: column '{col_name}' was not found.")
+
+        return hidden_columns, warnings
     
     @staticmethod
     def load_datalogs(file_paths, config_filename):
@@ -21,11 +60,13 @@ class FileLoader:
         """
         all_dataframes = []
         combined_metadata = {}
+        combined_hidden_columns = []
 
         for path in file_paths:
             result = FileLoader.load_datalog(path, config_filename)
             df = result['dataframe']
             metadata = result['metadata']
+            hidden_columns = result.get('hidden_columns', [])
             
             # Add a source file column to distinguish data
             df['_source_file'] = os.path.basename(path)
@@ -34,6 +75,9 @@ class FileLoader:
             
             # Simple metadata merge (last one wins for conflicting keys)
             combined_metadata.update(metadata)
+            for col_name in hidden_columns:
+                if col_name not in combined_hidden_columns:
+                    combined_hidden_columns.append(col_name)
 
         if not all_dataframes:
             return None
@@ -46,7 +90,8 @@ class FileLoader:
         
         return {
             'metadata': combined_metadata,
-            'dataframe': combined_df
+            'dataframe': combined_df,
+            'hidden_columns': combined_hidden_columns,
         }
 
     @staticmethod
@@ -251,6 +296,10 @@ class FileLoader:
             except DownsamplingError as exc:
                 downsampling_error = str(exc)
 
+        # 5. Post-process columns (after all conversions/downsampling)
+        postprocess_cfg = config.get("postprocess_columns", {})
+        hidden_columns, postprocess_warnings = FileLoader._apply_postprocess_columns(df, postprocess_cfg)
+
         column_mismatch_warnings = build_config_column_mismatch_warnings(
             data_config.get("columns", {}),
             original_cols,
@@ -266,4 +315,6 @@ class FileLoader:
             "column_mismatch_warnings": column_mismatch_warnings,
             "downsampling_meta": downsample_result_meta,
             "downsampling_error": downsampling_error,
+            "hidden_columns": hidden_columns,
+            "postprocess_warnings": postprocess_warnings,
         }
