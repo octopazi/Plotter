@@ -77,6 +77,12 @@ class MainWindow(QMainWindow):
         run_config_plots_action.triggered.connect(self.open_run_config_plots_dialog)
         plot_menu.addAction(run_config_plots_action)
 
+        # Script menu
+        script_menu = menubar.addMenu("Script")
+        dataset_process_action = QAction("Dataset process", self)
+        dataset_process_action.triggered.connect(self.open_script_process_dialog)
+        script_menu.addAction(dataset_process_action)
+
         # Tools menu (FFT)
         tools_menu = menubar.addMenu("Tools")
         fft_action = QAction("FFT", self)
@@ -842,6 +848,34 @@ class MainWindow(QMainWindow):
                     break
             QMessageBox.information(self, "FFT Complete",
                                     "FFT result has been added to the dataset list.")
+
+    def open_script_process_dialog(self):
+        from .script_process_dialog import ScriptProcessDialog
+
+        current_dataset = self.get_current_dataset()
+        preferred_dataset_id = current_dataset.id if current_dataset is not None else None
+        dialog = ScriptProcessDialog(
+            self.data_manager,
+            preferred_dataset_id=preferred_dataset_id,
+            parent=self,
+        )
+
+        if dialog.exec_():
+            self.update_file_list_widget()
+
+            if dialog.created_dataset_ids:
+                first_created_id = dialog.created_dataset_ids[0]
+                for index in range(self.file_list_widget.count()):
+                    item = self.file_list_widget.item(index)
+                    if item.data(Qt.UserRole) == first_created_id:
+                        self.file_list_widget.setCurrentItem(item)
+                        break
+
+            QMessageBox.information(
+                self,
+                "Script Complete",
+                f"Created {len(dialog.created_dataset_ids)} processed dataset(s).",
+            )
 
     def open_scatter_plot(self):
         # Deprecated: replaced by open_plot_dialog

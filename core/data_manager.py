@@ -28,6 +28,17 @@ class DataManager:
         ds = Dataset(name, dataframe, metadata, dataset_type, parent_id)
         self.datasets[ds.id] = ds
         return ds.id
+
+    def register_dataset(self, dataset):
+        """Stores an already-created Dataset instance and returns its UUID."""
+        if not isinstance(dataset, Dataset):
+            raise TypeError("register_dataset expects a Dataset instance")
+
+        if dataset.id in self.datasets:
+            raise ValueError(f"Dataset id already exists: {dataset.id}")
+
+        self.datasets[dataset.id] = dataset
+        return dataset.id
         
     def get_dataset(self, dataset_id):
         """Retrieves a dataset by UUID."""
