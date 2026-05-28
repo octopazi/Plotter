@@ -17,6 +17,9 @@ def ensure_config_folder_and_reference():
     config_dir = os.path.join(os.getcwd(), "Config")
     if not os.path.exists(config_dir):
         os.makedirs(config_dir)
+    plugin_dir = os.path.join(os.getcwd(), "Plugin")
+    if not os.path.exists(plugin_dir):
+        os.makedirs(plugin_dir)
     # Copy bundled reference file if not present
     ref_src = resource_path(os.path.join("Config", "full_config_reference.json"))
     ref_dst = os.path.join(config_dir, "full_config_reference.json")

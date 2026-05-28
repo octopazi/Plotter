@@ -27,6 +27,11 @@ This is an **alpha release** for early user feedback. Features and UI may change
   - Built-in FFT (Fast Fourier Transform) analysis with results as new linked datasets.
   - Modular design for adding new analysis tools (e.g., trendlines, moving averages).
 
+- **Dataset Scripts**
+  - Trusted local Python scripts can be stored in `Plugin/` and run against one or more selected datasets.
+  - Script output is registered back into the dataset manager as a new derived dataset.
+  - An FFT example script is included as the first plugin sample.
+
 - **Flexible Plotting**
   - Scatter/line plots with multi y-axis support and draggable legends.
   - Per-axis trendline and moving average overlays.
@@ -71,6 +76,7 @@ This is an **alpha release** for early user feedback. Features and UI may change
 ## Usage
 
 - Use the menubar to import data files, create/import configs, and access plotting/analysis tools.
+- Use `Script -> Dataset process` to run a Python script from `Plugin/` against selected datasets.
 - Create or edit import formats via the GUI or by editing JSON files in `Config/`.
 - FFT and other analysis tools are accessible from the Tools menu.
 - Inspect, delete, and export datasets from the dataset panel.
@@ -144,6 +150,7 @@ scripts/release.ps1      # Local release automation
 scripts/validate_version.py # Version rule validator
 Config/                  # User and sample config files
 Sample/                  # Example data and config templates
+Plugin/                  # Trusted local dataset-processing scripts
 gui/                     # PyQt5 GUI dialogs and main window
 core/                    # Backend logic (data, config, analysis, conversion)
 ```
@@ -155,6 +162,7 @@ core/                    # Backend logic (data, config, analysis, conversion)
 - [ ] Project save/load system (HDF5/Parquet + JSON for UI/project state)
 - [ ] Formula error dialogs for all conversion failures
 - [ ] Loading indicators for large file imports
+- [ ] Expand the dataset script runner with richer parameter forms per plugin
 - [ ] Enhanced plot toolbars and advanced plot types (histogram, box plot)
 - [ ] Cross-dataset plotting and interactive inspection tools (crosshair, markers)
 - [ ] Performance optimizations for large datasets (downsampling, memory-mapped files)
