@@ -130,9 +130,16 @@ class FFTDialog(QDialog):
         if dataset is None:
             return
 
+        metadata = dataset.metadata if isinstance(dataset.metadata, dict) else {}
+        hidden_columns = self._normalize_hidden_columns(metadata.get("hidden_columns", []))
+        hidden_set = set(hidden_columns)
+
         numeric_cols = dataset.df.select_dtypes(include='number').columns.tolist()
+        if hidden_set:
+            numeric_cols = [col for col in numeric_cols if col not in hidden_set]
+
         if not numeric_cols:
-            self.column_list.addItem("(No numeric columns found)")
+            self.column_list.addItem("(No visible numeric columns found)")
             return
 
         self.column_list.addItems(numeric_cols)
@@ -141,6 +148,22 @@ class FFTDialog(QDialog):
         total_rows = len(dataset.df)
         self.row_range_hint.setText(f"Dataset has {total_rows} rows  (valid: 0 – {total_rows - 1})")
         self.end_row_edit.setPlaceholderText(f"{total_rows} (last row)")
+
+    def _normalize_hidden_columns(self, values):
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            return []
+
+        hidden = []
+        seen = set()
+        for value in values:
+            name = str(value).strip()
+            if not name or name in seen:
+                continue
+            hidden.append(name)
+            seen.add(name)
+        return hidden
 
     # ------------------------------------------------------------------
     # Run FFT

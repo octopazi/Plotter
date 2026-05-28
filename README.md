@@ -39,7 +39,8 @@ This is an **alpha release** for early user feedback. Features and UI may change
   - Roadmap: cross-dataset plotting, advanced plot types (histogram, box plot), interactive inspection tools.
 
 - **User Experience**
-  - Dynamic config creation GUI (4-tab dialog: File Format, Columns, Conversions, Plot Config).
+  - Dynamic config creation GUI (5-tab dialog: File Format, Columns, Conversions, Plot Config, Downsampling).
+  - Column cleanup controls: mark mapped columns as hidden (plot UI only) or deleted (remove after processing).
   - Formula error handling with detailed GUI warnings.
   - Modern PyQt5 interface with persistent settings.
 

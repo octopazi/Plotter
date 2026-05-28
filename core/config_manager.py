@@ -50,6 +50,22 @@ class ConfigManager:
                 return val.replace('\\t', '\t').replace('\\n', '\n').replace('\\r', '\r')
             return val
 
+        def clean_name_list(values):
+            if isinstance(values, str):
+                values = [v.strip() for v in values.split(',') if v.strip()]
+            if not isinstance(values, list):
+                return []
+
+            names = []
+            seen = set()
+            for value in values:
+                name = str(value).strip()
+                if not name or name in seen:
+                    continue
+                names.append(name)
+                seen.add(name)
+            return names
+
         for section in ["header", "data"]:
             if section in config:
                 # Sanitize separators
@@ -122,6 +138,19 @@ class ConfigManager:
             config["downsampling"]["timing"] = timing
             # Method is preserved as-is; full validation happens in validate_config
 
+        # Optional section: post-process column visibility/removal
+        post_cfg = config.get("postprocess_columns")
+        if not isinstance(post_cfg, dict):
+            config["postprocess_columns"] = {"hidden": [], "deleted": []}
+        else:
+            deleted = clean_name_list(post_cfg.get("deleted", []))
+            deleted_set = set(deleted)
+            hidden = [name for name in clean_name_list(post_cfg.get("hidden", [])) if name not in deleted_set]
+            config["postprocess_columns"] = {
+                "hidden": hidden,
+                "deleted": deleted,
+            }
+
         return config
 
     @staticmethod
@@ -158,6 +187,17 @@ class ConfigManager:
             ok, msg = validate_downsampling_config(config_data["downsampling"])
             if not ok:
                 return False, msg
+
+        # Optional section: postprocess_columns
+        if "postprocess_columns" in config_data:
+            post_cfg = config_data.get("postprocess_columns")
+            if not isinstance(post_cfg, dict):
+                return False, "Invalid 'postprocess_columns': expected object."
+
+            for key in ("hidden", "deleted"):
+                values = post_cfg.get(key, [])
+                if not isinstance(values, list):
+                    return False, f"Invalid 'postprocess_columns.{key}': expected array."
 
         # We can add more specific type/schema checks here later
         return True, "Valid configuration."
