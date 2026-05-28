@@ -3,7 +3,7 @@
 
 A desktop GUI tool for importing, converting, analyzing, and plotting data from raw CSV or text files. Designed for flexibility, extensibility, and ease of use in scientific and engineering workflows.
 
-**Version:** 0.2.0-alpha
+**Version:** 0.3.0-alpha
 
 ---
 
@@ -17,6 +17,8 @@ This is an **alpha release** for early user feedback. Features and UI may change
 - **Customizable Data Import**
   - Import single or multiple files (CSV, TXT) using user-defined JSON configuration files.
   - Configurable parsing, column mapping, and sequential data conversions (math, hex, bitmask, lookup, etc.).
+  - Post-process column controls: keep columns in data but hide from plot selectors, or delete them after processing.
+  - Optional import-time downsampling (Decimation, LTTB, DWT) with before/after-conversion timing.
   - Multi-file import with dataset origin tracking and merging.
 
 - **Dataset Management**
@@ -35,8 +37,11 @@ This is an **alpha release** for early user feedback. Features and UI may change
 - **Flexible Plotting**
   - Scatter/line plots with multi y-axis support and draggable legends.
   - Per-axis trendline and moving average overlays.
+  - Multi-dataset plotting in a single plot window, including add/remove dataset controls.
+  - Auto/manual signal alignment with interpolation fallback for mismatched sampling.
+  - Interactive inspection tools: coordinate picker, pinned annotations, and draggable vertical cursors.
   - Optional config-driven auto-plot after import with multiple figure definitions.
-  - Roadmap: cross-dataset plotting, advanced plot types (histogram, box plot), interactive inspection tools.
+  - Roadmap: additional plot types (histogram, box plot) and deeper inspection/measurement tooling.
 
 - **User Experience**
   - Dynamic config creation GUI (5-tab dialog: File Format, Columns, Conversions, Plot Config, Downsampling).
@@ -78,6 +83,7 @@ This is an **alpha release** for early user feedback. Features and UI may change
 
 - Use the menubar to import data files, create/import configs, and access plotting/analysis tools.
 - Use `Script -> Dataset process` to run a Python script from `Plugin/` against selected datasets.
+- Use `Plot -> Run Config Plots` to open config-defined figures for currently loaded datasets.
 - Create or edit import formats via the GUI or by editing JSON files in `Config/`.
 - FFT and other analysis tools are accessible from the Tools menu.
 - Inspect, delete, and export datasets from the dataset panel.
@@ -89,10 +95,10 @@ This is an **alpha release** for early user feedback. Features and UI may change
 ### Version Naming Rules
 
 - This project currently enforces prerelease format: `MAJOR.MINOR.PATCH-alpha`
-- Valid example: `0.2.0-alpha`
-- Invalid examples: `0.2-alpha`, `v0.2.0-alpha`, `0.2.0-alpha.1` (not used in this project policy)
+- Valid example: `0.3.0-alpha`
+- Invalid examples: `0.3-alpha`, `v0.3.0-alpha`, `0.3.0-alpha.1` (not used in this project policy)
 - The only source of truth is `__version__` in `main.py`
-- Git tags must be prefixed with `v`, so release tag for this version is `v0.2.0-alpha`
+- Git tags must be prefixed with `v`, so release tag for this version is `v0.3.0-alpha`
 
 ### Local Release (Windows PowerShell)
 
@@ -109,36 +115,6 @@ What this script does:
 3. Installs dependencies and PyInstaller
 4. Builds with `main.spec`
 5. Creates versioned outputs in `dist/Plotter-<version>/` plus `dist/Plotter-<version>.zip`
-
-### GitHub Actions Release (Beginner Guide)
-
-The workflow file is `.github/workflows/release.yml`.
-
-How it works:
-
-1. Trigger: push a git tag like `v0.2.0-alpha`
-2. CI installs Python + dependencies
-3. CI validates that tag version matches `main.py` version
-4. CI builds PyInstaller bundle and zips it
-5. CI creates a GitHub prerelease and uploads the ZIP artifact
-
-One-time repository setup:
-
-1. Open GitHub repository settings
-2. Ensure Actions are enabled
-3. Ensure workflow has permission to write repository contents (for creating releases)
-
-Release commands:
-
-```bash
-git add .
-git commit -m "release: v0.2.0-alpha"
-git push origin main
-git tag v0.2.0-alpha
-git push origin v0.2.0-alpha
-```
-
-After pushing the tag, open the Actions tab and watch the `Build and Release` workflow.
 
 ---
 
@@ -161,12 +137,11 @@ core/                    # Backend logic (data, config, analysis, conversion)
 ## Roadmap & Future Development
 
 - [ ] Project save/load system (HDF5/Parquet + JSON for UI/project state)
-- [ ] Formula error dialogs for all conversion failures
 - [ ] Loading indicators for large file imports
 - [ ] Expand the dataset script runner with richer parameter forms per plugin
 - [ ] Enhanced plot toolbars and advanced plot types (histogram, box plot)
-- [ ] Cross-dataset plotting and interactive inspection tools (crosshair, markers)
-- [ ] Performance optimizations for large datasets (downsampling, memory-mapped files)
+- [ ] Direct cross-dataset axis selection from the initial plot setup dialog
+- [ ] Additional performance optimizations for very large datasets (beyond current import-time downsampling)
 - [ ] Unit conversion library integration (e.g., Pint)
 - [ ] Data storage/memory optimization for massive logs
 

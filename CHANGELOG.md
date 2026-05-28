@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [v0.3.0-alpha] - 2026-05-28
+
+### Added
+- Import-time downsampling pipeline with configurable timing (`before_conversions` or `after_conversions`) and support for Decimation, LTTB, and DWT methods.
+- Downsampling controls in the config editor via dedicated Plot Config and Downsampling tabs.
+- Multi-select dataset deletion dialog for removing multiple datasets at once.
+- FFT dialog row-range selection and preferred dataset preselection from current context.
+- FFT output dataset naming that includes selected signal context.
+- Multi-dataset plotting in a single plot window with dataset add/remove controls.
+- Auto/manual dataset alignment using cross-correlation with interpolation fallback for mismatched sampling.
+- Post-process column handling at import (`hidden` and `deleted`) with GUI warnings when rules cannot be fully applied.
+- Dataset script plugin workflow (`Script -> Dataset process`) with plugin discovery/validation and sample plugin support.
+
+### Changed
+- Application version bumped to `0.3.0-alpha`.
+- Data viewer rendering performance improved for large datasets.
+- Import pipeline robustness improved for header regex extraction and column mapping edge cases.
+
+### Fixed
+- Added missing `openpyxl` dependency for Excel export reliability.
+- Normalized separator handling to avoid CSV parsing failures from values like `", "`.
+- Resolved single-line multi-header regex extraction issues in expert mode.
+- Prevented unintended index promotion and mapping failures during file loading.
+- Fixed dtype classification in the table model to avoid float-type related TypeError crashes.
+- Fixed DWT downsampling read-only array error.
+
 ## [v0.2.0-alpha] - 2026-04-21
 
 ### Added

@@ -26,6 +26,8 @@ a = Analysis(
     binaries=[],
     datas=[
         ('full_config_reference.json', 'Config'),
+        ('Plugin/fft_example.py', 'Plugin'),
+        ('Plugin/README.md', 'Plugin'),
         ('CHANGELOG.md', '.'),
         ('RELEASE_NOTES.md', '.'),
     ],
