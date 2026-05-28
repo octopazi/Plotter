@@ -29,6 +29,17 @@ def ensure_config_folder_and_reference():
         except Exception as e:
             print(f"Warning: Could not copy reference config: {e}")
 
+    # Copy bundled plugin files if not present
+    plugin_seed_files = ["fft_example.py", "README.md"]
+    for file_name in plugin_seed_files:
+        src = resource_path(os.path.join("Plugin", file_name))
+        dst = os.path.join(plugin_dir, file_name)
+        if not os.path.exists(dst):
+            try:
+                shutil.copyfile(src, dst)
+            except Exception as e:
+                print(f"Warning: Could not copy plugin file '{file_name}': {e}")
+
 if __name__ == "__main__":
     ensure_config_folder_and_reference()
 
