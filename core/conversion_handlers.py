@@ -31,6 +31,7 @@ Supported types (config "type" field)
 import pandas as pd
 import numpy as np
 import struct
+import re
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -275,6 +276,85 @@ def _handle_scale(df, conv):
     offset = float(conv.get("offset", 0.0))
     return series.astype("float64") * float(factor) + offset
 
+def _handle_string_op(df, conv):
+    """
+    Perform string operations:
+      - strip: strip whitespace or custom chars
+      - substring: extract substring via start/length or slicing
+      - concat: concatenate multiple columns with separator
+    """
+
+    op = conv.get("operation")
+
+    if op == "strip":
+        s = _col(df, conv).astype(str)
+
+        chars = conv.get("chars", None)  # None = whitespace
+        if chars:
+            return s.str.strip(chars)
+        else:
+            return s.str.strip()
+
+    elif op == "substring":
+        s = _col(df, conv).astype(str)
+
+        start = conv.get("start", 0)
+        length = conv.get("length")
+        
+
+        if length is not None:
+            return s.str.slice(start, start + length)
+        else:
+            return s.str.slice(start)
+
+    else:
+        raise ValueError(f"Unsupported string operation '{op}'")
+
+def _handle_regex(df, conv):
+    """
+    Apply regex to string.
+
+    Features:
+      - Validates regex pattern using re.compile()
+      - Supports optional flags (IGNORECASE, MULTILINE, DOTALL)
+    """
+
+    fn = conv.get("function")
+
+    s = _col(df, conv).astype(str)
+    if fn == "sub":
+        pattern = conv.get("pattern")
+        repl = conv.get("repl", "")
+
+        if not pattern:
+            raise ValueError("Missing required field 'pattern'")
+
+        # Parse flags
+        flag_names = conv.get("flags", [])
+        if isinstance(flag_names, str):
+            flag_names = [flag_names]
+
+        flag_map = {
+            "IGNORECASE": re.IGNORECASE,
+            "MULTILINE": re.MULTILINE,
+            "DOTALL": re.DOTALL,
+        }
+
+        flags = 0
+        for f in flag_names:
+            if f not in flag_map:
+                raise ValueError(f"Unsupported regex flag '{f}'")
+            flags |= flag_map[f]
+
+        # Validate regex pattern
+        try:
+            compiled = re.compile(pattern, flags)
+        except re.error as e:
+            raise ValueError(f"Invalid regex pattern '{pattern}': {e}")
+
+        # Apply substitution
+        return s.apply(lambda x: compiled.sub(repl, x))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Handler Registry
@@ -289,6 +369,8 @@ HANDLER_REGISTRY = {
     "bitmask":            _handle_bitmask,
     "lookup":             _handle_lookup,
     "scale":              _handle_scale,
+    "string_op":          _handle_string_op,
+    "regex":              _handle_regex,
 }
 
 
@@ -375,7 +457,7 @@ CONV_FIELD_SPECS = {
         },
         {
             "key": "divisor", "label": "Divisor (divide)", "widget": "doublespinbox",
-            "default": 1000.0, "min": 0.000001, "max": 1e12, "decimals": 6,
+            "default": 1.0, "min": 0.000001, "max": 1e12, "decimals": 6,
             "tooltip": "Divisor applied after int conversion  (only for 'divide' method).",
         },
     ],
@@ -469,6 +551,89 @@ CONV_FIELD_SPECS = {
             "tooltip": "Additive offset applied after scaling.",
         },
     ],
+
+    "string_op": [
+        {
+            "key": "operation",
+            "label": "Operation",
+            "widget": "combo",
+            "required": True,
+            "items": ["strip", "substring", "concat"],
+            "tooltip": "Select string operation type"
+        },
+        {
+            "key": "source",
+            "label": "Source Column",
+            "widget": "lineedit",
+            "required": False,
+            "placeholder": "Required for strip / substring",
+        },
+        {
+            "key": "chars",
+            "label": "Strip Characters",
+            "widget": "lineedit",
+            "required": False,
+            "placeholder": "Leave empty for whitespace",
+            "tooltip": "Characters to strip"
+        },
+        {
+            "key": "start",
+            "label": "Start Index",
+            "widget": "spinbox",
+            "required": False,
+            "default": 0,
+            "min": 0,
+        },
+        {
+            "key": "length",
+            "label": "Length",
+            "widget": "spinbox",
+            "required": False,
+            "min": 1,
+            "tooltip": "Leave empty to extract till end"
+        },
+    ],
+    "regex": [
+        {
+            "key": "function",
+            "label": "Regex Function",
+            "widget": "combo",
+            "required": True,
+            "items": ["sub"],
+            "tooltip": "Select regex function to apply"
+        },
+        {
+            "key": "source",
+            "label": "Source Column",
+            "widget": "lineedit",
+            "required": True,
+        },
+        {
+            "key": "pattern",
+            "label": "Regex Pattern",
+            "widget": "lineedit",
+            "required": True,
+            "placeholder": "e.g. \\d+",
+            "tooltip": "Python regex pattern"
+        },
+        {
+            "key": "repl",
+            "label": "Replacement",
+            "widget": "lineedit",
+            "required": False,
+            "default": "",
+            "placeholder": "Replacement string"
+        },
+        {
+            "key": "flags",
+            "label": "Flags",
+            "widget": "textedit",
+            "required": False,
+            "placeholder": "IGNORECASE\nMULTILINE",
+            "tooltip": "One per line: IGNORECASE, MULTILINE, DOTALL",
+            "height": 60,
+        },
+    ],
 }
 
 
@@ -479,29 +644,46 @@ def conv_summary(conv):
     Centralised here so the GUI never needs per-type formatting knowledge.
     """
     t = conv.get("type", "expr")
-    if t == "expr":
-        return f"expr: {conv.get('formula', '')}"
-    elif t == "hex_to_int":
-        signed = " signed" if conv.get("signed") else ""
-        return f"hex_to_int({conv.get('source', '')}){signed}"
-    elif t == "hex_to_float":
-        method = conv.get("method", "ieee754")
-        if method == "ieee754":
-            return f"hex_to_float({conv.get('source', '')}, ieee754 {conv.get('bits', 32)}bit)"
-        else:
-            return f"hex_to_float({conv.get('source', '')}, ÷{conv.get('divisor', '')})"
-    elif t == "hex_to_fixedpoint":
-        return f"hex_to_fixedpoint({conv.get('source', '')}, Q.{conv.get('frac_bits', '')})"
-    elif t == "bitmask":
-        return (f"bitmask({conv.get('source', '')} & {conv.get('mask', '')} "
-                f">> {conv.get('shift', 0)})")
-    elif t == "lookup":
-        n = len(conv.get("map", {}))
-        return f"lookup({conv.get('source', '')}, {n} entries)"
-    elif t == "scale":
-        return (f"scale({conv.get('source', '')} "
-                f"× {conv.get('factor', '')} + {conv.get('offset', 0)})")
-    return t
+
+    match t:
+        case "expr":
+            return f"expr: {conv.get('formula', '')}"
+        case "hex_to_int":
+                signed = " signed" if conv.get("signed") else ""
+                return f"hex_to_int({conv.get('source', '')}){signed}"
+        case "hex_to_float":
+            method = conv.get("method", "ieee754")
+            if method == "ieee754":
+                return f"hex_to_float({conv.get('source', '')}, ieee754 {conv.get('bits', 32)}bit)"
+            else:
+                return f"hex_to_float({conv.get('source', '')}, ÷{conv.get('divisor', '')})"
+        case "hex_to_fixedpoint":
+            return f"hex_to_fixedpoint({conv.get('source', '')}, Q.{conv.get('frac_bits', '')})"
+        case "bitmask":
+            return f"bitmask({conv.get('source', '')} & {conv.get('mask', '')} >> {conv.get('shift', 0)})"
+        case "lookup":
+            n = len(conv.get("map", {}))
+            return f"lookup({conv.get('source', '')}, {n} entries)"    
+        case "scale":
+            return f"scale({conv.get('source', '')} × {conv.get('factor', '')} + {conv.get('offset', 0)})"
+        case "string_op":
+            op = conv.get("operation")
+            if op == "strip":
+                chars = conv.get("chars", None)
+                chars_desc = f"'{chars}'" if chars else "whitespace"
+                return f"strip({conv.get('source', '')}, {chars_desc})"
+            elif op == "substring":
+                start = conv.get("start", 0)
+                length = conv.get("length")
+                length_desc = f"{length} chars" if length else "till end"
+                return f"substring({conv.get('source', '')}, start={start}, {length_desc})"
+        case "regex":
+            fn = conv.get("function")
+            pattern = conv.get("pattern", "")
+            return f"regex({conv.get('source', '')}, {fn}, {pattern})"
+
+        case _:
+            return t
 
 
 # ─────────────────────────────────────────────────────────────────────────────
