@@ -151,6 +151,24 @@ class ConfigManager:
                 "deleted": deleted,
             }
 
+        def normalize_input_type(value):
+            normalized = str(value or "auto").strip().lower()
+            return normalized if normalized in ("auto", "string") else "auto"
+
+        data_cfg = config.get("data")
+        if isinstance(data_cfg, dict):
+            columns_cfg = data_cfg.get("columns")
+            if isinstance(columns_cfg, dict):
+                x_cfg = columns_cfg.get("x")
+                if isinstance(x_cfg, dict):
+                    x_cfg["input_type"] = normalize_input_type(x_cfg.get("input_type"))
+
+                y_cfg = columns_cfg.get("y")
+                if isinstance(y_cfg, list):
+                    for y_col in y_cfg:
+                        if isinstance(y_col, dict):
+                            y_col["input_type"] = normalize_input_type(y_col.get("input_type"))
+
         return config
 
     @staticmethod
