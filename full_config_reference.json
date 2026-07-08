@@ -30,12 +30,12 @@
     "ignore_prefix": "//",
     "total_data_lines": 0,
     "columns": {
-      "x": { "type": "column", "index": 0, "name": "time_ms" },
+      "x": { "type": "column", "index": 0, "name": "time_ms", "input_type": "auto" },
       "y": [
-        { "name": "raw_adc",   "index": 1 },
-        { "name": "raw_hex",   "index": 2 },
-        { "name": "raw_word",  "index": 3 },
-        { "name": "mode_code", "index": 4 }
+        { "name": "raw_adc",   "index": 1, "input_type": "auto" },
+        { "name": "raw_hex",   "index": 2, "input_type": "string" },
+        { "name": "raw_word",  "index": 3, "input_type": "auto" },
+        { "name": "mode_code", "index": 4, "input_type": "auto" }
       ]
     }
   },

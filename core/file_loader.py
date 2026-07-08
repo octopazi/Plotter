@@ -160,6 +160,33 @@ class FileLoader:
             skipinitialspace=True,
         )
 
+        columns_mapping = data_config.get("columns", {})
+
+        def normalize_input_type(value):
+            normalized = str(value or "auto").strip().lower()
+            return normalized if normalized in ("auto", "string") else "auto"
+
+        read_csv_converters = {}
+
+        def register_string_input(index_value):
+            try:
+                idx = int(index_value)
+            except (TypeError, ValueError):
+                return
+            if idx >= 0:
+                read_csv_converters[idx] = str
+
+        x_def = columns_mapping.get("x", {})
+        if x_def.get("type", "column") == "column" and normalize_input_type(x_def.get("input_type")) == "string":
+            register_string_input(x_def.get("index"))
+
+        for y_def in columns_mapping.get("y", []):
+            if normalize_input_type(y_def.get("input_type")) == "string":
+                register_string_input(y_def.get("index"))
+
+        if read_csv_converters:
+            read_csv_kwargs["converters"] = read_csv_converters
+
         try:
             df = pd.read_csv(
                 file_path,
@@ -203,7 +230,6 @@ class FileLoader:
         
         # 3. Map Standard/Domain Column Names FIRST
         # This allows users to write formulas using their mapped names (e.g., "TC1 / 1000")
-        columns_mapping = data_config.get("columns", {})
         rename_map = {}
         mapping_warnings = []
 
@@ -241,9 +267,8 @@ class FileLoader:
                 return None, idx
 
             return source_col, idx
-        
+
         # Map X Axis
-        x_def = columns_mapping.get("x", {})
         x_type = x_def.get("type", "column")  # Default to "column" for backward compatibility
         
         if x_type == "column":

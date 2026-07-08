@@ -232,10 +232,16 @@ class CreateImportFormatDialog(QDialog):
         self.x_index = QSpinBox()
         self.x_index.setRange(0, 50)
         self.x_index.setToolTip("Zero-based column index for X (ignored if type is 'index').")
+        self.x_input_type = QComboBox()
+        self.x_input_type.addItems(["auto", "string"])
+        self.x_input_type.setToolTip(
+            "Input type for the source column. Use 'string' to preserve raw text such as bare hex values or leading zeros."
+        )
         self.x_type.currentTextChanged.connect(self._on_x_mapping_changed)
         self.x_index.valueChanged.connect(self._on_x_mapping_changed)
         lx.addRow("X Type:", self.x_type)
         lx.addRow("X Column Index:", self.x_index)
+        lx.addRow("X Input Type:", self.x_input_type)
         box_x.setLayout(lx)
         layout.addWidget(box_x)
 
@@ -249,6 +255,11 @@ class CreateImportFormatDialog(QDialog):
         self.y_index_spin = QSpinBox()
         self.y_index_spin.setRange(0, 50)
         self.y_index_spin.setToolTip("Zero-based column index in the data file.")
+        self.y_input_type = QComboBox()
+        self.y_input_type.addItems(["auto", "string"])
+        self.y_input_type.setToolTip(
+            "Input type for this column. Use 'string' to preserve raw text such as bare hex values or leading zeros."
+        )
         self.y_hidden_check = QCheckBox("Hidden")
         self.y_hidden_check.setToolTip(
             "Keep this column in the imported table but hide it from plot selectors."
@@ -270,6 +281,8 @@ class CreateImportFormatDialog(QDialog):
         y_add_row.addWidget(self.y_name_edit)
         y_add_row.addWidget(QLabel("Index:"))
         y_add_row.addWidget(self.y_index_spin)
+        y_add_row.addWidget(QLabel("Input Type:"))
+        y_add_row.addWidget(self.y_input_type)
         y_add_row.addWidget(self.y_hidden_check)
         y_add_row.addWidget(self.y_deleted_check)
         y_add_row.addWidget(self.btn_add_y)
@@ -395,8 +408,15 @@ class CreateImportFormatDialog(QDialog):
             seen.add(name)
         return names
 
+    def _normalize_input_type(self, value):
+        normalized = str(value or "auto").strip().lower()
+        return normalized if normalized in ("auto", "string") else "auto"
+
     def _format_y_item_text(self, y_col):
         text = f"{y_col.get('name', '')} (index {y_col.get('index', 0)})"
+        input_type = self._normalize_input_type(y_col.get("input_type", "auto"))
+        if input_type != "auto":
+            text = f"{text} [{input_type}]"
         if y_col.get("deleted", False):
             return f"{text} [delete]"
         if y_col.get("hidden", False):
@@ -518,10 +538,12 @@ class CreateImportFormatDialog(QDialog):
         self.y_columns = y_cfg
         self.y_list.clear()
         for yc in self.y_columns:
+            yc["input_type"] = self._normalize_input_type(yc.get("input_type", "auto"))
             self.y_list.addItem(self._format_y_item_text(yc))
 
         self.x_type.setCurrentText(x_cfg.get("type", "index"))
         self.x_index.setValue(int(x_cfg.get("index", 0)))
+        self.x_input_type.setCurrentText(self._normalize_input_type(x_cfg.get("input_type", "auto")))
         self.x_source_name = x_cfg.get("source_name", "")
 
         self.column_names_from_header = bool(detection.get("column_names_from_header", False))
@@ -986,6 +1008,7 @@ class CreateImportFormatDialog(QDialog):
         yc = self.y_columns[row]
         self.y_name_edit.setText(yc.get("name", ""))
         self.y_index_spin.setValue(yc.get("index", 0))
+        self.y_input_type.setCurrentText(self._normalize_input_type(yc.get("input_type", "auto")))
         self.y_hidden_check.setChecked(bool(yc.get("hidden", False)))
         self.y_deleted_check.setChecked(bool(yc.get("deleted", False)))
         self._on_y_delete_toggled(self.y_deleted_check.isChecked())
@@ -997,6 +1020,7 @@ class CreateImportFormatDialog(QDialog):
     def _cancel_edit_y(self):
         self._y_editing_row = None
         self.y_name_edit.clear()
+        self.y_input_type.setCurrentText("auto")
         self.y_hidden_check.setChecked(False)
         self.y_deleted_check.setChecked(False)
         self._on_y_delete_toggled(False)
@@ -1018,6 +1042,7 @@ class CreateImportFormatDialog(QDialog):
         item_data = {
             "name": name,
             "index": index,
+            "input_type": self._normalize_input_type(self.y_input_type.currentText()),
             "hidden": bool(is_hidden and not is_deleted),
             "deleted": bool(is_deleted),
         }
@@ -1357,13 +1382,14 @@ class CreateImportFormatDialog(QDialog):
                     "x": {
                         "type": self.x_type.currentText(),
                         "index": self.x_index.value(),
+                        "input_type": self._normalize_input_type(self.x_input_type.currentText()),
                         "source_name": self.x_source_name,
                     },
                     "y": [
                         {
                             key: value
                             for key, value in y_col.items()
-                            if key in ("name", "index", "source_name")
+                            if key in ("name", "index", "input_type", "source_name")
                         }
                         for y_col in self.y_columns
                     ],
@@ -1508,6 +1534,7 @@ class EditImportFormatDialog(CreateImportFormatDialog):
         xc = cols.get("x", {})
         self.x_type.setCurrentText(xc.get("type", "column"))
         self.x_index.setValue(xc.get("index", 0))
+        self.x_input_type.setCurrentText(self._normalize_input_type(xc.get("input_type", "auto")))
         self.x_source_name = xc.get("source_name", "")
 
         self.y_columns = []
@@ -1522,6 +1549,7 @@ class EditImportFormatDialog(CreateImportFormatDialog):
             new_item = {
                 "name": n,
                 "index": i,
+                "input_type": self._normalize_input_type(yc.get("input_type", "auto")),
                 "hidden": is_hidden,
                 "deleted": is_deleted,
             }
